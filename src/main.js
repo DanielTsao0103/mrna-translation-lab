@@ -60,6 +60,7 @@ const dom = {
 };
 const state = {progress:0,playheadSeconds:0,playing:false,speed:1,pinned:null,hovered:null,selectedAA:'M',reduceMotion:matchMedia('(prefers-reduced-motion: reduce)').matches};
 dom.timeline.max=String(totalSeconds);
+const objectOptions=[...$('object-select').options].map(option=>option.cloneNode(true));
 const sourceLine = 'Example RNA · 5′→3′';
 let aminoPreview=null;
 
@@ -98,7 +99,48 @@ function currentDetail(){
   if(p<76.45)return detail('stop','TERMINATION','A stop signal arrives.','UAA is a stop codon. It does not recruit a tRNA or add an amino acid.','A release factor recognizes the stop signal and frees the completed chain.',[['Codon','UAA'],['Chain','76 amino acids']]);
   return proteinDetail;
 }
-function refreshInspector(){showDetail(state.pinned||state.hovered||currentDetail(),!!state.pinned);}
+function visibleParts(progress=state.progress){
+  const fold=Math.max(0,Math.min(1,(progress-76.44)/.56));
+  const entry=THREE.MathUtils.smoothstep(progress,.1,.63);
+  const ribosome=entry>.12&&fold<.88;
+  return {
+    mrna:progress<.48||ribosome,
+    ribosome,
+    E:ribosome,P:ribosome,A:ribosome,
+    trna:ribosome&&progress>=.23&&progress<76.75,
+    residue:progress<76&&progress>=.23,
+    chain:chainCount(progress)>0&&fold<.995,
+    protein:fold>.76
+  };
+}
+function isDetailPresent(item){
+  if(!item)return false;
+  const p=state.progress,parts=visibleParts(p),id=item.id;
+  if(id==='protein')return parts.protein;
+  if(id==='chain')return parts.chain;
+  if(id==='mrna')return parts.mrna;
+  if(id==='ribosome')return parts.ribosome;
+  if(id.startsWith('site-'))return parts[id.slice(5)];
+  // All codons and bases remain visible in the separate full-sequence strip.
+  if(id.startsWith('codon-')||id.startsWith('base-'))return true;
+  if(id.startsWith('trna-')){
+    if(!parts.trna)return false;
+    const trnaIndex=Number(id.slice(5)),active=Math.min(76,Math.floor(p));
+    return active===0?trnaIndex===0:active===76?trnaIndex===75:[active,active-1,active-2].includes(trnaIndex);
+  }
+  if(id.startsWith('aa-')){
+    const residue=id.split('-')[2];
+    if(residue==='catalog')return true;
+    const residueIndex=Number(residue);
+    return parts.protein||parts.chain&&residueIndex<chainCount(p)||parts.residue&&residueIndex===Math.floor(p);
+  }
+  return true;
+}
+function refreshInspector(){
+  if(state.pinned&&!isDetailPresent(state.pinned))state.pinned=null;
+  if(state.hovered&&!isDetailPresent(state.hovered))state.hovered=null;
+  showDetail(state.pinned||state.hovered||currentDetail(),!!state.pinned);
+}
 function setHovered(item,e){state.hovered=item;refreshInspector();if(item&&e){dom.hover.hidden=false;dom.hover.textContent=item.title;const rect=dom.sceneWrap.getBoundingClientRect();dom.hover.style.left=`${Math.min(rect.width-130,Math.max(8,e.clientX-rect.left+13))}px`;dom.hover.style.top=`${Math.min(rect.height-37,Math.max(8,e.clientY-rect.top+11))}px`;}else dom.hover.hidden=true;}
 function pin(item){state.pinned=item;refreshInspector();}
 
@@ -154,6 +196,8 @@ catalogLayout.before(catalogDisclosure);catalogDisclosure.append(catalogSummary,
 
 let renderer,scene,camera,controls,raycaster,pointer,modelGroup,translationGroup,fullRNA,movingRNA,activeCodonHalo,ribosomeGroup,trnaLayer,chainGroup,foldGroup,particles;
 let currentMeshes=[],foldMaterials=[],ribosomeMaterials=[],chainBeads=[],chainBond;
+let hoverPick=null,hoverRoot=null,lastScenePointer=null,lastHoverSample=0;
+let hoverBackups=[];
 let cachedCodonIndex=-99,lastSelection=-1,lastChainLength=-1;
 const siteX={E:-2.45,P:0,A:2.45};
 const codonSpacing=2.45;
@@ -169,7 +213,7 @@ function makeTRNA(index,site,opacity=1){const aa=AA[sequence[index]],codon=codon
   const stem=tube([[0,0,0],[.02,.5,0],[.16,.97,0],[.48,1.16,.02],[.93,1.17,.05],[1.34,1.3,.08],[1.56,1.84,.1]],.085,0xd6a480,opacity);setPick(stem,trnaDetail(index),4);group.add(stem);
   const arm=tube([[.16,.97,0],[-.17,1.15,0],[-.56,1.23,-.05],[-.7,1.5,-.05]],.075,0xe9bc93,opacity);setPick(arm,trnaDetail(index),4);group.add(arm);
   for(let j=0;j<3;j++){const bead=orb(.13,baseColors[anticodon(codon)[j]],opacity,12);bead.position.set((j-1)*.28,-.05,.13);setPick(bead,trnaDetail(index),5);group.add(bead);}
-  const cargo=orb(.22,tint,opacity,16);cargo.position.set(1.58,1.87,.1);setPick(cargo,aminoDetail(sequence[index],index),6);group.add(cargo);group.userData.cargo=cargo;group.userData.site=site;group.userData.index=index;return group;
+  const cargo=orb(.22,tint,opacity,16);cargo.position.set(1.58,1.87,.1);setPick(cargo,aminoDetail(sequence[index],index),6);group.add(cargo);group.userData.cargo=cargo;group.userData.site=site;group.userData.index=index;group.traverse(object=>{if(object!==group&&object!==cargo)object.userData.highlightRoot=group;});return group;
 }
 function buildMovingRNA(){
   movingRNA=new THREE.Group();translationGroup.add(movingRNA);
@@ -181,15 +225,15 @@ function buildMovingRNA(){
     const center=index*codonSpacing;
     [...codon].forEach((base,baseIndex)=>{
       const x=center+(baseIndex-1)*.34;
-      const sphere=orb(.17,baseColors[base],1,16);sphere.position.set(x,-1.24,2.28);setPick(sphere,baseDetail(base,index,baseIndex),7);movingRNA.add(sphere);
-      const glyph=new THREE.Sprite(glyphTemplates[base].material);glyph.scale.copy(glyphTemplates[base].scale);glyph.position.set(x,-.94,2.48);setPick(glyph,baseDetail(base,index,baseIndex),8);movingRNA.add(glyph);
+      const baseGroup=new THREE.Group();movingRNA.add(baseGroup);
+      const sphere=orb(.17,baseColors[base],1,16);sphere.position.set(x,-1.24,2.28);setPick(sphere,baseDetail(base,index,baseIndex),7);sphere.userData.highlightRoot=baseGroup;baseGroup.add(sphere);
+      const glyph=new THREE.Sprite(glyphTemplates[base].material);glyph.scale.copy(glyphTemplates[base].scale);glyph.position.set(x,-.94,2.48);setPick(glyph,baseDetail(base,index,baseIndex),8);glyph.userData.highlightRoot=baseGroup;baseGroup.add(glyph);
     });
-    const hit=orb(.53,0xffffff,.001,10);hit.position.set(center,-1.14,1.8);setPick(hit,codonDetail(index),3);movingRNA.add(hit);
   });
   activeCodonHalo=new THREE.Mesh(new THREE.TorusGeometry(.61,.039,8,32),new THREE.MeshBasicMaterial({color:0xf6ce90,transparent:true,opacity:.92,depthTest:false}));
-  activeCodonHalo.position.set(0,-1.23,2.19);movingRNA.add(activeCodonHalo);
+  activeCodonHalo.position.set(0,-1.23,2.19);setPick(activeCodonHalo,codonDetail(0),5);movingRNA.add(activeCodonHalo);
 }
-function buildTRNAs(index){disposeGroup(trnaLayer);currentMeshes=[];if(index===0){const starter=makeTRNA(0,'P');trnaLayer.add(starter);currentMeshes.push(starter);return;}if(index>=76){const holder=makeTRNA(75,'P');holder.userData.cargo.visible=false;trnaLayer.add(holder);currentMeshes.push(holder);return;}const prev=makeTRNA(index-1,'P'),current=makeTRNA(index,'A');trnaLayer.add(prev,current);currentMeshes.push(prev,current);if(index>1){const exiting=makeTRNA(index-2,'E',.55);trnaLayer.add(exiting);currentMeshes.push(exiting);}}
+function buildTRNAs(index){if(hoverPick&&trnaLayer.getObjectById(hoverPick.object.id))clearModelHighlight();disposeGroup(trnaLayer);currentMeshes=[];if(index===0){const starter=makeTRNA(0,'P');trnaLayer.add(starter);currentMeshes.push(starter);return;}if(index>=76){const holder=makeTRNA(75,'P');holder.userData.cargo.visible=false;trnaLayer.add(holder);currentMeshes.push(holder);return;}const prev=makeTRNA(index-1,'P'),current=makeTRNA(index,'A');trnaLayer.add(prev,current);currentMeshes.push(prev,current);if(index>1){const exiting=makeTRNA(index-2,'E',.55);exiting.userData.cargo.visible=false;trnaLayer.add(exiting);currentMeshes.push(exiting);}}
 function chainPosition(j){return new THREE.Vector3(1.56-.04*j+.25*Math.sin(j*.48),1.72+.049*j,2.43+.2*Math.cos(j*.39));}
 function buildChain(){const points=[];for(let j=0;j<76;j++){const bead=orb(j===0?.135:.104,0xd2a676,1,12);setPick(bead,aminoDetail(sequence[j],j),8);bead.position.copy(chainPosition(j));bead.visible=false;chainGroup.add(bead);chainBeads.push(bead);points.push(bead.position);}const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(76*3),3));chainBond=new THREE.Line(geometry,new THREE.LineBasicMaterial({color:0xe8c99e,transparent:true,opacity:.9}));chainGroup.add(chainBond);}
 function makeFold(){
@@ -241,29 +285,72 @@ function makeFold(){
   const ribbon=new THREE.Mesh(geometry,material);
   setPick(ribbon,proteinDetail,7);foldGroup.add(ribbon);foldMaterials.push(material);
 
-  // Invisible residue targets preserve per-amino-acid inspection on the ribbon.
-  const pickGeometry=new THREE.SphereGeometry(.17,8,6);
-  const pickMaterial=new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false});
-  ca.forEach((point,index)=>{const target=new THREE.Mesh(pickGeometry,pickMaterial);target.position.copy(point);setPick(target,aminoDetail(sequence[index],index),10);foldGroup.add(target);});
   modelGroup.add(foldGroup);
 }
-function makeModel(){modelGroup=new THREE.Group();scene.add(modelGroup);translationGroup=new THREE.Group();modelGroup.add(translationGroup);ribosomeGroup=new THREE.Group();translationGroup.add(ribosomeGroup);ribosomeGroup.add(organic(-1.8,-1.85,-.28,2.7,1.03,1.15,0x83a98d,.83),organic(1.42,-1.87,-.14,2.42,.97,1.06,0x86ad91,.78),organic(-1.48,.8,-.77,2.43,1.25,1.3,0x5e866e,.67),organic(1.22,1.0,-.64,2.69,1.45,1.5,0x638b70,.64),organic(.35,1.5,-1.26,2.38,.92,1.15,0x719b79,.6));
-  for(const [site,x] of Object.entries(siteX)){const marker=textSprite(site,'#f8fff0','rgba(37,76,57,.94)',[.66,.53]);marker.position.set(x,-.26,2.85);setPick(marker,siteDetail(site),9);translationGroup.add(marker);const halo=orb(.37,site==='A'?0xe6b880:0xb8ddad,.25,16);halo.position.set(x,-.2,1.45);setPick(halo,siteDetail(site),5);translationGroup.add(halo);}
+function makeModel(){modelGroup=new THREE.Group();scene.add(modelGroup);translationGroup=new THREE.Group();modelGroup.add(translationGroup);ribosomeGroup=new THREE.Group();translationGroup.add(ribosomeGroup);ribosomeGroup.add(organic(-1.8,-1.85,-.28,2.7,1.03,1.15,0x83a98d,.83),organic(1.42,-1.87,-.14,2.42,.97,1.06,0x86ad91,.78),organic(-1.48,.8,-.77,2.43,1.25,1.3,0x5e866e,.67),organic(1.22,1.0,-.64,2.69,1.45,1.5,0x638b70,.64),organic(.35,1.5,-1.26,2.38,.92,1.15,0x719b79,.6));ribosomeGroup.traverse(object=>{if(object!==ribosomeGroup)object.userData.highlightRoot=ribosomeGroup;});
+  for(const [site,x] of Object.entries(siteX)){const siteGroup=new THREE.Group();translationGroup.add(siteGroup);const marker=textSprite(site,'#f8fff0','rgba(37,76,57,.94)',[.66,.53]);marker.position.set(x,-.26,2.85);setPick(marker,siteDetail(site),9);marker.userData.highlightRoot=siteGroup;siteGroup.add(marker);const halo=orb(.37,site==='A'?0xe6b880:0xb8ddad,.25,16);halo.position.set(x,-.2,1.45);setPick(halo,siteDetail(site),5);halo.userData.highlightRoot=siteGroup;siteGroup.add(halo);}
   buildMovingRNA();trnaLayer=new THREE.Group();translationGroup.add(trnaLayer);chainGroup=new THREE.Group();modelGroup.add(chainGroup);buildChain();makeFold();
   fullRNA=new THREE.Group();modelGroup.add(fullRNA);const fullPoints=[];for(let i=0;i<codonText.length;i++){const x=-4.65+i/(codonText.length-1)*9.3,y=.32*Math.sin(i*.14)+.21*Math.cos(i*.075),z=1.55+.14*Math.sin(i*.095);fullPoints.push([x,y,z]);const bead=orb(.072,baseColors[codonText[i]],1,8);bead.position.set(x,y,z);setPick(bead,baseDetail(codonText[i],Math.floor(i/3),i%3),6);fullRNA.add(bead);}const fullBackbone=tube(fullPoints.filter((_,i)=>i%3===0),.055,0x345d50,1);setPick(fullBackbone,mrnaDetail,2);fullRNA.add(fullBackbone);
   particles=new THREE.Group();for(let i=0;i<66;i++){const phi=i*2.3999,r=3.5+(i%8)*.54,x=Math.cos(phi)*r,y=Math.sin(phi*.7)*3.7,z=-2-(i%6)*.45;const mote=orb(.025+(i%3)*.009,i%4===0?0xe5e8c1:0xd7e7d5,.23,6);mote.position.set(x,y,z);particles.add(mote);}scene.add(particles);
 }
-function init3D(){try{renderer=new THREE.WebGLRenderer({canvas:dom.scene,antialias:true,alpha:true,powerPreference:'high-performance'});}catch(error){console.warn('WebGL unavailable',error);dom.fallback.hidden=false;dom.scene.hidden=true;return;}renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.55;scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(42,1,.1,100);scene.add(new THREE.AmbientLight(0xffffff,1.85));const key=new THREE.DirectionalLight(0xfff5da,2.15);key.position.set(-4,7,9);scene.add(key);const rim=new THREE.DirectionalLight(0xa1cfb1,1.25);rim.position.set(6,2,-4);scene.add(rim);controls=new OrbitControls(camera,dom.scene);controls.enableDamping=true;controls.enablePan=false;controls.minDistance=8;controls.maxDistance=28;controls.maxPolarAngle=Math.PI*.78;controls.minPolarAngle=Math.PI*.18;controls.target.set(0,.35,0);raycaster=new THREE.Raycaster();pointer=new THREE.Vector2();makeModel();resize3D();new ResizeObserver(resize3D).observe(dom.sceneWrap);dom.scene.addEventListener('pointermove',onPointerMove);dom.scene.addEventListener('pointerleave',()=>setHovered(null));let press=null;dom.scene.addEventListener('pointerdown',e=>{press={x:e.clientX,y:e.clientY};});dom.scene.addEventListener('pointerup',e=>{if(press&&Math.hypot(e.clientX-press.x,e.clientY-press.y)<5){const item=pickAt(e);if(item)pin(item);}press=null;});}
+function clearModelHighlight(){
+  for(const backup of hoverBackups){
+    if(backup.scale)backup.object.scale.copy(backup.scale);
+    if(backup.color)backup.material.color.copy(backup.color);
+    if(backup.emissive)backup.material.emissive.copy(backup.emissive);
+    if(backup.intensity!==undefined)backup.material.emissiveIntensity=backup.intensity;
+  }
+  hoverBackups=[];hoverRoot=null;hoverPick=null;
+}
+function setModelHighlight(record){
+  const root=record?.object.userData.highlightRoot||record?.object||null;
+  if(hoverRoot===root&&hoverPick?.item.id===record?.item.id){hoverPick=record;return;}
+  clearModelHighlight();
+  if(!record)return;
+  hoverPick=record;hoverRoot=root;
+  const seen=new Set();
+  root.traverse(object=>{
+    if(object.isSprite){hoverBackups.push({object,scale:object.scale.clone()});object.scale.multiplyScalar(1.14);return;}
+    const material=object.material;
+    if(!material||Array.isArray(material)||seen.has(material))return;
+    seen.add(material);
+    const backup={material,color:material.color?.clone(),emissive:material.emissive?.clone(),intensity:material.emissiveIntensity};
+    hoverBackups.push(backup);
+    material.color?.lerp(new THREE.Color(0xfff1b7),.2);
+    if(material.emissive){material.emissive.setHex(0xffe8aa);material.emissiveIntensity=.28;}
+  });
+}
+function init3D(){try{renderer=new THREE.WebGLRenderer({canvas:dom.scene,antialias:true,alpha:true,powerPreference:'high-performance'});}catch(error){console.warn('WebGL unavailable',error);dom.fallback.hidden=false;dom.scene.hidden=true;return;}renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.55;scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(42,1,.1,100);scene.add(new THREE.AmbientLight(0xffffff,1.85));const key=new THREE.DirectionalLight(0xfff5da,2.15);key.position.set(-4,7,9);scene.add(key);const rim=new THREE.DirectionalLight(0xa1cfb1,1.25);rim.position.set(6,2,-4);scene.add(rim);controls=new OrbitControls(camera,dom.scene);controls.enableDamping=true;controls.enablePan=false;controls.minDistance=8;controls.maxDistance=28;controls.maxPolarAngle=Math.PI*.78;controls.minPolarAngle=Math.PI*.18;controls.target.set(0,.35,0);raycaster=new THREE.Raycaster();pointer=new THREE.Vector2();makeModel();resize3D();new ResizeObserver(resize3D).observe(dom.sceneWrap);dom.scene.addEventListener('pointermove',onPointerMove);dom.scene.addEventListener('pointerleave',()=>{lastScenePointer=null;clearModelHighlight();setHovered(null);});let press=null;dom.scene.addEventListener('pointerdown',e=>{press={x:e.clientX,y:e.clientY};});dom.scene.addEventListener('pointerup',e=>{if(press&&Math.hypot(e.clientX-press.x,e.clientY-press.y)<5){const selected=pickAt(e);if(selected)pin(selected.item);}press=null;});}
 function resize3D(){if(!renderer)return;const w=dom.sceneWrap.clientWidth,h=dom.sceneWrap.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;const halfHeight=5.8,halfWidth=5.6;const fov=camera.fov*Math.PI/180;const distance=Math.max(halfHeight/Math.tan(fov/2),halfWidth/(Math.tan(fov/2)*camera.aspect));camera.position.set(0,1.15,distance);camera.updateProjectionMatrix();controls.update();}
-function pickAt(event){if(!renderer)return null;const rect=dom.scene.getBoundingClientRect();pointer.x=((event.clientX-rect.left)/rect.width)*2-1;pointer.y=-((event.clientY-rect.top)/rect.height)*2+1;raycaster.setFromCamera(pointer,camera);const hits=raycaster.intersectObjects(modelGroup.children,true);let best=null,score=-1;for(const hit of hits){const object=hit.object;let item=object.userData.detail;let priority=object.userData.priority||0;if(object.userData.atomMap&&hit.instanceId!==undefined){const atom=object.userData.atomMap[hit.instanceId];item=aminoDetail(sequence[atom.r-1],atom.r-1);priority=10;}if(item){const candidate=priority-hit.distance*.015;if(candidate>score){best=item;score=candidate;}}}return best;}
-function onPointerMove(e){const item=pickAt(e);if(item?.id!==state.hovered?.id)setHovered(item,e);else if(item&&e) setHovered(item,e);dom.scene.style.cursor=item?'pointer':'grab';}
+function isWorldVisible(object){for(let node=object;node;node=node.parent)if(!node.visible)return false;return true;}
+function pickAt(event){
+  if(!renderer)return null;
+  const rect=dom.scene.getBoundingClientRect();
+  pointer.x=((event.clientX-rect.left)/rect.width)*2-1;
+  pointer.y=-((event.clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(pointer,camera);
+  for(const hit of raycaster.intersectObjects(modelGroup.children,true)){
+    const object=hit.object,item=object.userData.detail;
+    if(!item||!isWorldVisible(object)||!isDetailPresent(item))continue;
+    if(object.material?.opacity!==undefined&&object.material.opacity<.12)continue;
+    return {item,object,point:hit.point,distance:hit.distance};
+  }
+  return null;
+}
+function onPointerMove(event){
+  lastScenePointer={clientX:event.clientX,clientY:event.clientY};lastHoverSample=performance.now();
+  const selected=pickAt(event);
+  setModelHighlight(selected);
+  setHovered(selected?.item||null,event);
+  dom.scene.style.cursor=selected?'pointer':'grab';
+}
 
 function update3D(){if(!renderer)return;const p=state.progress;let index=Math.floor(Math.min(p,76));if(p<1)index=0;const phase=p-index;const foldT=Math.max(0,Math.min(1,(p-76.44)/.56));if(index!==cachedCodonIndex){buildTRNAs(index);cachedCodonIndex=index;}
   const introT=THREE.MathUtils.smoothstep(p,.1,.63),active=p>=.1;translationGroup.visible=active&&foldT<.98;fullRNA.visible=p<.5;fullRNA.position.y=-.83*introT;fullRNA.scale.y=1-.4*introT;ribosomeGroup.visible=active;trnaLayer.visible=active&&p<76.8;chainGroup.visible=active;translationGroup.traverse(object=>{const mat=object.material;if(mat&&!Array.isArray(mat)){if(mat.userData.originalOpacity===undefined)mat.userData.originalOpacity=mat.opacity;mat.transparent=true;mat.opacity=mat.userData.originalOpacity*introT*(1-foldT);}});if(fullRNA.visible)fullRNA.traverse(object=>{const mat=object.material;if(mat&&!Array.isArray(mat)){if(mat.userData.originalOpacity===undefined)mat.userData.originalOpacity=mat.opacity;mat.transparent=true;mat.opacity=mat.userData.originalOpacity*(1-THREE.MathUtils.smoothstep(p,.04,.5));}});
   const f=state.reduceMotion?(phase>=.62?1:0):phase;
   const translocation=THREE.MathUtils.smoothstep(f,.62,.96);
   movingRNA.position.x=index===0?5.25*(1-THREE.MathUtils.smoothstep(p,.1,.85)):(1-index)*codonSpacing-(index<76?codonSpacing*translocation:0);
-  activeCodonHalo.position.x=index*codonSpacing;activeCodonHalo.material.color.setHex(index===76?0xf1a38b:0xf6ce90);
+  activeCodonHalo.position.x=index*codonSpacing;activeCodonHalo.material.color.setHex(index===76?0xf1a38b:0xf6ce90);if(hoverRoot===activeCodonHalo)activeCodonHalo.material.color.lerp(new THREE.Color(0xfff1b7),.2);activeCodonHalo.userData.detail=codonDetail(index);
   if(index===0&&currentMeshes[0]){currentMeshes[0].position.set(0,-.38,2.38);currentMeshes[0].scale.setScalar(p<.22?.001:Math.min(1,Math.max(.05,(p-.2)*2)));}
   if(index===76&&currentMeshes[0]){currentMeshes[0].position.set(0,-.38,2.38);currentMeshes[0].scale.setScalar(1-THREE.MathUtils.smoothstep(p,76.46,76.8));}
   if(index>0&&index<76){const [prev,current,exiting]=currentMeshes;prev.position.set(siteX.P+(siteX.E-siteX.P)*translocation,-.38,2.38);current.position.set(4.8+(siteX.A-4.8)*THREE.MathUtils.smoothstep(f,.02,.26)+(siteX.P-siteX.A)*translocation,-.38,2.38);current.userData.cargo.visible=f<.48;prev.userData.cargo.visible=false;if(exiting){exiting.position.set(siteX.E-1.4*THREE.MathUtils.smoothstep(f,.2,.9),-.38,2.38);exiting.scale.setScalar(.76*(1-THREE.MathUtils.smoothstep(f,.35,.95)));}}
@@ -272,6 +359,7 @@ function update3D(){if(!renderer)return;const p=state.progress;let index=Math.fl
   let chainLength=p<.52?0:p<1?1:p<76?Math.min(76,Math.floor(p)+((phase>.49||state.reduceMotion)?1:0)):76;
   if(chainLength!==lastChainLength||foldT>0){for(let j=0;j<76;j++){const bead=chainBeads[j];bead.visible=j<chainLength;const start=chainPosition(j),end=foldGroup.userData.ca[j];bead.position.copy(start).lerp(end,foldT);bead.material.opacity=1-foldT*.15;const attr=chainBond.geometry.attributes.position;attr.setXYZ(j,bead.position.x,bead.position.y,bead.position.z);}chainBond.geometry.setDrawRange(0,chainLength);chainBond.geometry.attributes.position.needsUpdate=true;lastChainLength=chainLength;}
   foldGroup.visible=foldT>.72;foldMaterials.forEach(mat=>mat.opacity=Math.max(0,(foldT-.72)/.28));chainGroup.visible=active&&foldT<.995;
+  if(hoverPick&&(!isWorldVisible(hoverPick.object)||!isDetailPresent(hoverPick.item)))clearModelHighlight();
   controls.update();renderer.render(scene,camera);
 }
 function formatCaption(p){if(p<.14)return 'A complete mRNA message carries the instructions, read three bases at a time.';if(p<.65)return 'The 5′ end of the mRNA enters the ribosome and slides toward the P site.';if(p<1)return 'AUG reaches P. The initiator tRNA pairs with the start codon.';if(p<3){const phase=p%1;if(phase<.26)return '1 · A charged tRNA enters the A site beside the chain-carrying tRNA in P.';if(phase<.44)return '2 · Its anticodon pairs with the codon in the A site.';if(phase<.62)return '3 · A peptide bond extends the growing chain.';return '4 · tRNAs move A → P → E as mRNA slides exactly one codon.';}if(p<76)return 'The same A → P → E cycle repeats rapidly while mRNA moves through the ribosome.';if(p<76.44)return 'UAA reaches A. No tRNA pairs with this stop codon.';if(p<76.7)return 'The completed chain releases from the P-site tRNA.';if(p<77)return 'The free chain leaves the ribosome and approaches its measured fold.';return 'The finished protein is shown as a 1UBQ backbone ribbon; the folding path is illustrative.';}
@@ -285,6 +373,16 @@ function updatePauseReadout(){
   const rows=[['mRNA codon',codons[index]],['tRNA anticodon',stop?'none':anticodon(codons[index])],['Amino acid',stop?'none added':AA[sequence[index]].name],['Action',pausedAction(p)],['Chain length',`${chainCount(p)} / 76`]];
   dom.pauseReadout.innerHTML=`<span class="pause-eyebrow">PAUSED FRAME · CODON ${index+1} / 77</span>${rows.map(([name,value])=>`<div><span>${name}</span><strong>${value}</strong></div>`).join('')}`;
 }
+function updateAvailableObjects(){
+  const available=visibleParts();
+  const select=$('object-select');
+  const key=Object.entries(available).filter(([,present])=>present).map(([name])=>name).join('|');
+  if(key===updateAvailableObjects.lastKey)return;
+  updateAvailableObjects.lastKey=key;
+  const selected=select.value;
+  select.replaceChildren(...objectOptions.filter(option=>!option.value||available[option.value]).map(option=>option.cloneNode(true)));
+  select.value=available[selected]?selected:'';
+}
 function updateUI(){
   const p=state.progress,index=Math.min(76,Math.floor(p));
   const phase=p<.14?'THE MESSAGE':p<1?'INITIATION · mRNA ENTRY':p<2?'ELONGATION · CYCLE 1 SLOW':p<3?'ELONGATION · CYCLE 2 SLOW':p<76?'ELONGATION · RAPID REPEAT':p<76.44?'STOP CODON':p<77?'RELEASE AND FOLD':'FOLDED PROTEIN';
@@ -296,10 +394,10 @@ function updateUI(){
   dom.caption.textContent=formatCaption(p);
   dom.timeline.value=String(state.playheadSeconds);dom.timeline.style.setProperty('--progress',`${state.playheadSeconds/totalSeconds*100}%`);
   dom.count.textContent=`${String(Math.min(77,Math.max(0,Math.ceil(p)))).padStart(2,'0')} / 77 CODONS`;
-  if(index!==lastSelection){codonButtons.forEach((button,i)=>{button.classList.toggle('active',i===index);button.classList.toggle('played',i<index);button.setAttribute('aria-current',i===index?'step':'false');});const target=codonButtons[index];if(target){const trackBox=dom.track.getBoundingClientRect(),targetBox=target.getBoundingClientRect();const left=targetBox.left-trackBox.left+dom.track.scrollLeft-dom.track.clientWidth/2+targetBox.width/2;const distant=Math.abs(left-dom.track.scrollLeft)>dom.track.clientWidth*.7;dom.track.scrollTo({left,behavior:state.reduceMotion||distant?'instant':'smooth'});}lastSelection=index;}
-  refreshInspector();updatePauseReadout();
+  if(index!==lastSelection){codonButtons.forEach((button,i)=>{button.classList.toggle('active',i===index);button.classList.toggle('played',i<index);button.setAttribute('aria-current',i===index?'step':'false');});const target=codonButtons[index];if(target){const trackBox=dom.track.getBoundingClientRect(),targetBox=target.getBoundingClientRect();const left=targetBox.left-trackBox.left+dom.track.scrollLeft-dom.track.clientWidth/2+targetBox.width/2;dom.track.scrollLeft=left;}lastSelection=index;}
+  updateAvailableObjects();refreshInspector();updatePauseReadout();
 }
-function setProgress(value){state.progress=Math.max(0,Math.min(77,value));state.playheadSeconds=progressToSeconds(state.progress);updateUI();update3D();syncPlay();}
+function setProgress(value){state.progress=Math.max(0,Math.min(77,value));state.playheadSeconds=progressToSeconds(state.progress);updateUI();update3D();if(lastScenePointer)onPointerMove(lastScenePointer);syncPlay();}
 function syncPlay(){dom.playIcon.textContent=state.playing?'Ⅱ':'▶';dom.playText.textContent=state.playing?'Pause sequence':state.progress>=77?'Replay sequence':'Play sequence';dom.play.setAttribute('aria-label',dom.playText.textContent);}
 dom.play.addEventListener('click',()=>{if(state.progress>=77)setProgress(0);state.playing=!state.playing;syncPlay();updateUI();});
 $('restart').addEventListener('click',()=>{state.playing=false;syncPlay();setProgress(0);state.pinned=null;refreshInspector();});
@@ -308,11 +406,11 @@ $('next').addEventListener('click',()=>{state.playing=false;syncPlay();const cur
 dom.timeline.addEventListener('input',()=>{state.playing=false;syncPlay();setProgress(secondsToProgress(Number(dom.timeline.value)));});
 dom.speed.addEventListener('change',()=>{state.speed=Number(dom.speed.value);});
 dom.unpin.addEventListener('click',()=>{state.pinned=null;refreshInspector();});
-$('object-select').addEventListener('change',event=>{const choice=event.target.value,index=Math.min(76,Math.floor(state.progress));const items={mrna:mrnaDetail,ribosome:ribosomeDetail,E:siteDetail('E'),P:siteDetail('P'),A:siteDetail('A'),trna:index===76?codonDetail(76):trnaDetail(index),residue:aminoDetail(sequence[Math.min(75,index)],Math.min(75,index)),chain:chainDetail,protein:proteinDetail};if(items[choice])pin(items[choice]);event.target.value='';});
+$('object-select').addEventListener('change',event=>{const choice=event.target.value,index=Math.min(76,Math.floor(state.progress));const items={mrna:mrnaDetail,ribosome:ribosomeDetail,E:siteDetail('E'),P:siteDetail('P'),A:siteDetail('A'),trna:index===76?trnaDetail(75):trnaDetail(index),residue:index<76?aminoDetail(sequence[index],index):null,chain:chainDetail,protein:proteinDetail};if(visibleParts()[choice]&&items[choice])pin(items[choice]);event.target.value='';});
 document.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;if(e.code==='Space'&&document.activeElement===document.body){e.preventDefault();dom.play.click();}if(e.code==='ArrowRight'&&document.activeElement===document.body)$('next').click();if(e.code==='ArrowLeft'&&document.activeElement===document.body)$('previous').click();});
 matchMedia('(prefers-reduced-motion: reduce)').addEventListener?.('change',e=>{state.reduceMotion=e.matches;});
 init3D();updateUI();update3D();syncPlay();
-let lastTime=performance.now();function frame(now){const dt=Math.min(.09,(now-lastTime)/1000);lastTime=now;if(state.playing){state.playheadSeconds=Math.min(totalSeconds,state.playheadSeconds+dt*state.speed);state.progress=secondsToProgress(state.playheadSeconds);if(state.progress>=77){state.progress=77;state.playing=false;syncPlay();}updateUI();}if(particles&&!state.reduceMotion){particles.rotation.z+=dt*.006;}update3D();if(aminoPreview){aminoPreview.controls.update();aminoPreview.renderer.render(aminoPreview.scene,aminoPreview.camera);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
+let lastTime=performance.now();function frame(now){const dt=Math.min(.09,(now-lastTime)/1000);lastTime=now;if(state.playing){state.playheadSeconds=Math.min(totalSeconds,state.playheadSeconds+dt*state.speed);state.progress=secondsToProgress(state.playheadSeconds);if(state.progress>=77){state.progress=77;state.playing=false;syncPlay();}updateUI();}if(particles&&!state.reduceMotion){particles.rotation.z+=dt*.006;}update3D();if(lastScenePointer&&now-lastHoverSample>80)onPointerMove(lastScenePointer);if(aminoPreview){aminoPreview.controls.update();aminoPreview.renderer.render(aminoPreview.scene,aminoPreview.camera);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
 
 // A small public hook supports deterministic browser checks without exposing app internals.
-window.translationLesson={sequence,codons,aminoAcids:AA,structureId:structure.pdb,setProgress,getProgress:()=>state.progress,getPlayheadSeconds:()=>state.playheadSeconds,getRNAOffset:()=>movingRNA?.position.x,secondsToProgress,progressToSeconds,playbackSegments};
+window.translationLesson={sequence,codons,aminoAcids:AA,structureId:structure.pdb,setProgress,getProgress:()=>state.progress,getPlayheadSeconds:()=>state.playheadSeconds,getRNAOffset:()=>movingRNA?.position.x,getHover:()=>hoverPick?.item.id||null,getHighlightState:()=>({item:hoverPick?.item.id||null,parts:hoverBackups.length}),getAvailableParts:()=>visibleParts(),secondsToProgress,progressToSeconds,playbackSegments};
