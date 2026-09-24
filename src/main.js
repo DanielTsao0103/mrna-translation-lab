@@ -1,0 +1,318 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import structure from './structure.json';
+import aminoStructures from './amino-structures.json';
+
+const AA = {
+  A:{name:'Alanine',abbr:'Ala',codon:'GCU',kind:'Nonpolar',description:'A compact, nonpolar side chain that often fits within a protein’s interior.'},
+  R:{name:'Arginine',abbr:'Arg',codon:'CGU',kind:'Basic',description:'A positively charged side chain that can form strong interactions with other molecules.'},
+  N:{name:'Asparagine',abbr:'Asn',codon:'AAU',kind:'Polar',description:'A polar side chain that can form hydrogen bonds.'},
+  D:{name:'Aspartate',abbr:'Asp',codon:'GAU',kind:'Acidic',description:'A negatively charged side chain that often participates in molecular interactions.'},
+  C:{name:'Cysteine',abbr:'Cys',codon:'UGU',kind:'Polar',description:'A sulfur-containing side chain that can form disulfide bonds in some proteins.'},
+  Q:{name:'Glutamine',abbr:'Gln',codon:'CAA',kind:'Polar',description:'A polar side chain with a longer reach than asparagine.'},
+  E:{name:'Glutamate',abbr:'Glu',codon:'GAA',kind:'Acidic',description:'A negatively charged side chain that helps proteins interact with their surroundings.'},
+  G:{name:'Glycine',abbr:'Gly',codon:'GGU',kind:'Small',description:'The smallest amino acid; its tiny side chain allows flexible turns.'},
+  H:{name:'Histidine',abbr:'His',codon:'CAU',kind:'Basic',description:'A ring-shaped side chain that can gain or lose a proton near physiological pH.'},
+  I:{name:'Isoleucine',abbr:'Ile',codon:'AUU',kind:'Nonpolar',description:'A branched nonpolar side chain that often packs inside a protein.'},
+  L:{name:'Leucine',abbr:'Leu',codon:'CUG',kind:'Nonpolar',description:'A branched nonpolar side chain common in protein interiors.'},
+  K:{name:'Lysine',abbr:'Lys',codon:'AAA',kind:'Basic',description:'A positively charged side chain that can contact negatively charged molecules.'},
+  M:{name:'Methionine',abbr:'Met',codon:'AUG',kind:'Nonpolar',description:'A sulfur-containing amino acid. AUG also marks the start of this example message.'},
+  F:{name:'Phenylalanine',abbr:'Phe',codon:'UUU',kind:'Aromatic',description:'A nonpolar side chain with a flat aromatic ring.'},
+  P:{name:'Proline',abbr:'Pro',codon:'CCU',kind:'Cyclic',description:'Its side chain loops back onto the backbone, restricting the chain’s shape.'},
+  S:{name:'Serine',abbr:'Ser',codon:'UCU',kind:'Polar',description:'A small polar side chain with a hydroxyl group.'},
+  T:{name:'Threonine',abbr:'Thr',codon:'ACU',kind:'Polar',description:'A polar side chain with a hydroxyl group and a small branch.'},
+  W:{name:'Tryptophan',abbr:'Trp',codon:'UGG',kind:'Aromatic',description:'The largest standard amino acid, with two connected aromatic rings.'},
+  Y:{name:'Tyrosine',abbr:'Tyr',codon:'UAU',kind:'Aromatic',description:'An aromatic side chain that also has a polar hydroxyl group.'},
+  V:{name:'Valine',abbr:'Val',codon:'GUU',kind:'Nonpolar',description:'A branched nonpolar side chain that helps form a packed core.'}
+};
+const complement = {A:'U',U:'A',G:'C',C:'G'};
+const baseNames = {A:'Adenine',U:'Uracil',G:'Guanine',C:'Cytosine'};
+const baseColors = {A:0xc9e9ad,U:0xf0c18c,G:0xa4ccd4,C:0xd9b8ce};
+const sequence = structure.sequence;
+const codons = [...sequence].map(letter => AA[letter].codon).concat('UAA');
+const codonText = codons.join('');
+// Spend real teaching time on initiation and two complete cycles, then compress repetition.
+const playbackSegments = [
+  {start:0,end:1,seconds:8,label:'initiation'},
+  {start:1,end:2,seconds:11,label:'first cycle'},
+  {start:2,end:3,seconds:11,label:'second cycle'},
+  {start:3,end:76,seconds:73*.3,label:'rapid repetition'},
+  {start:76,end:77,seconds:9,label:'stop and release'}
+];
+let totalSeconds=0;
+for(const segment of playbackSegments){segment.at=totalSeconds;totalSeconds+=segment.seconds;}
+function secondsToProgress(seconds){for(const part of playbackSegments){if(seconds<=part.at+part.seconds)return part.start+(seconds-part.at)/part.seconds*(part.end-part.start);}return 77;}
+function progressToSeconds(progress){for(const part of playbackSegments){if(progress<=part.end)return part.at+(progress-part.start)/(part.end-part.start)*part.seconds;}return totalSeconds;}
+if (sequence.length !== 76 || codons.length !== 77 || !sequence.startsWith('M') || ![...sequence].every(letter => AA[letter])) throw new Error('Invalid lesson sequence');
+if ([...sequence].some((letter,index) => AA[letter].codon.length !== 3 || (index === 0 && AA[letter].codon !== 'AUG'))) throw new Error('Invalid codon mapping');
+
+const $ = id => document.getElementById(id);
+const dom = {
+  scene:$('scene'),sceneWrap:$('scene-wrap'),fallback:$('scene-fallback'),hover:$('hover-label'),
+  phase:$('stage-phase'),codon:$('scene-codon'),amino:$('scene-amino'),chain:$('scene-chain-count'),caption:$('scene-caption'),
+  play:$('play'),playIcon:$('play-icon'),playText:$('play-text'),timeline:$('timeline'),speed:$('speed'),
+  count:$('progress-count'),progressPhase:$('progress-phase'),track:$('sequence-track'),
+  inspectorKicker:$('inspector-kicker'),inspectorTitle:$('inspector-title'),inspectorDescription:$('inspector-description'),
+  inspectorFact:$('inspector-fact'),inspectorData:$('inspector-data'),pauseReadout:$('pause-readout'),pinState:$('pin-state'),unpin:$('unpin'),
+  catalogGrid:$('catalog-grid'),catalogLetter:$('catalog-letter'),catalogAbbr:$('catalog-abr'),catalogName:$('catalog-name'),
+  catalogDescription:$('catalog-description'),catalogCodon:$('catalog-codon'),catalogAnticodon:$('catalog-anticodon'),
+  catalogNote:$('catalog-note'),mini:$('mini-trna'),miniText:$('mini-site-text')
+};
+const state = {progress:0,playheadSeconds:0,playing:false,speed:1,pinned:null,hovered:null,selectedAA:'M',reduceMotion:matchMedia('(prefers-reduced-motion: reduce)').matches};
+dom.timeline.max=String(totalSeconds);
+const sourceLine = 'Example RNA · 5′→3′';
+let aminoPreview=null;
+
+function detail(id,kicker,title,description,fact,rows=[]){return {id,kicker,title,description,fact,rows};}
+function aminoDetail(letter,index=null){const aa=AA[letter];return detail(`aa-${letter}-${index??'catalog'}`,'AMINO ACID',`${aa.name} · ${aa.abbr}`,aa.description,`Amino acid ${index===null?'representative':index+1} ${index===null?'in the catalog':'in the ubiquitin chain'}.`,[['Class',aa.kind],['Example codon',aa.codon],...(index===null?[]:[['Chain position',String(index+1)]])]);}
+function codonDetail(index){const codon=codons[index],stop=index===76,letter=sequence[index];return detail(`codon-${index}`,stop?'TERMINATION SIGNAL':'mRNA CODON',`${codon} ${stop?'· stop':`· ${AA[letter].name}`}`,stop?'This triplet does not specify an amino acid. It signals that translation should end.':`Bases ${index*3+1}–${index*3+3} of this example message encode ${AA[letter].name}.`,`Codon ${index+1} of 77 · read from 5′ to 3′.`,[['Position',String(index+1)],['Bases',codon],['Result',stop?'Stop':AA[letter].abbr]]);}
+function baseDetail(base,index,baseIndex){return detail(`base-${index}-${baseIndex}`,'RNA NUCLEOTIDE',`${baseNames[base]} · ${base}`,`${baseNames[base]} is one of RNA’s four nucleotide bases. The ribosome reads it as part of a three-base codon.`,`This is base ${baseIndex+1} of codon ${index+1}. RNA uses uracil (U) instead of thymine (T).`,[['Codon',codons[index]],['Absolute position',String(index*3+baseIndex+1)]]);}
+function trnaDetail(index){const letter=sequence[index],aa=AA[letter],codon=codons[index];return detail(`trna-${index}`,'TRANSFER RNA',`${aa.abbr}-tRNA`,index===0?'The initiator tRNA pairs with AUG and begins in the P site.':`This tRNA carries ${aa.name} to the A site, pairs with ${codon}, then moves through P and E.`,`The anticodon is written 3′→5′ so it aligns with the 5′→3′ mRNA codon.`,[['mRNA codon',codon],['tRNA anticodon',anticodon(codon)],['Cargo',aa.name]]);}
+function anticodon(codon){return [...codon].map(base=>complement[base]).join('');}
+function siteDetail(site){const labels={E:['Exit site','An empty tRNA briefly occupies E before leaving the ribosome.'],P:['Peptidyl site','P holds the tRNA carrying the growing polypeptide chain.'],A:['Aminoacyl site','A accepts the incoming tRNA that matches the next codon.']};const [title,description]=labels[site];return detail(`site-${site}`,'RIBOSOME SITE',`${site} · ${title}`,description,site==='P'?'The initiator tRNA starts here.':'During elongation, tRNAs normally progress A → P → E.',[['Site',site],['Role',title]]);}
+const ribosomeDetail=detail('ribosome','RIBOSOME','The protein-making machine','The ribosome holds the mRNA and tRNAs in precise positions while amino acids are linked.','Its two subunits create the A, P, and E tRNA binding sites.',[['Reads','mRNA codons'],['Builds','Polypeptide chain']]);
+const mrnaDetail=detail('mrna','MESSENGER RNA','A coded message','This example mRNA contains 76 amino-acid codons followed by a UAA stop codon.','Its 231 bases are read in groups of three, moving 5′ → 3′.',[['Bases','A · U · G · C'],['Length','231 bases']]);
+const chainDetail=detail('chain','POLYPEPTIDE','A chain under construction','The ribosome joins amino acids with peptide bonds. The chain grows as each codon is translated.','The precise order of amino acids determines the protein’s possible structure.',[['Target length','76 residues'],['Bond','Peptide bond']]);
+const proteinDetail=detail('protein','FINISHED PROTEIN','Ubiquitin, folded','The final ribbon follows measured backbone coordinates from Protein Data Bank entry 1UBQ. Its colors mark helices, sheets, and connecting loops.','The motion into the final shape is illustrative; 1UBQ records the folded structure, not its folding pathway.',[['Residues','76'],['Structure','PDB 1UBQ'],['Model','Backbone ribbon']]);
+
+function showDetail(item,pinned=false){
+  const key=`${item.id}:${pinned}`;
+  if(showDetail.lastKey===key)return;
+  showDetail.lastKey=key;
+  dom.inspectorKicker.textContent=item.kicker;
+  dom.inspectorTitle.textContent=item.title;
+  dom.inspectorDescription.textContent=item.description;
+  dom.inspectorFact.innerHTML='<span class="fact-line"></span><p></p>';
+  dom.inspectorFact.querySelector('p').textContent=item.fact;
+  dom.inspectorData.replaceChildren(...item.rows.map(([key,value])=>{const row=document.createElement('div');row.className='data-row';const a=document.createElement('span'),b=document.createElement('span');a.textContent=key;b.textContent=value;row.append(a,b);return row;}));
+  dom.pinState.textContent=pinned?'DETAIL PINNED':'FOLLOWING THE ANIMATION';
+  dom.unpin.hidden=!pinned;
+}
+function currentDetail(){
+  const p=state.progress;
+  if(p<.14)return detail('intro','THE MESSAGE','One message, read in threes.','The full mRNA contains 231 RNA bases. The ribosome will read them as 77 three-base codons.','The animation follows the process; pause anywhere to inspect the exact codon and carrier.');
+  if(p<1)return detail('initiation','INITIATION','The message enters.','The mRNA threads through the ribosome until AUG sits in the P site. The initiator tRNA pairs with it.','AUG establishes the reading frame for every codon that follows.',[['Start codon','AUG'],['Initiator site','P']]);
+  if(state.playing&&p>=3&&p<76)return detail('rapid-repeat','ELONGATION · RAPID REPEAT','The cycle repeats.','An incoming tRNA pairs at A. A peptide bond lengthens the chain. The mRNA and tRNAs move together by one codon, and an empty tRNA leaves at E.','Pause to reveal the exact codon, anticodon, residue, and action at any frame.',[['Incoming','A site'],['Growing chain','P site'],['Departure','E site']]);
+  if(state.playing&&p<3){const step=p%1,cycle=Math.floor(p),stage=step<.26?0:step<.44?1:step<.62?2:3;const titles=['A new tRNA arrives.','The anticodon pairs.','A peptide bond forms.','The message advances.'];const descriptions=['A charged tRNA moves into the A site beside the tRNA already in P.','Three anticodon bases on the incoming tRNA align with the mRNA codon.','The growing chain is transferred to the amino acid held at A.','The tRNAs shift toward P and E while the mRNA slides one codon through the ribosome.'];return detail(`slow-${cycle}-${stage}`,'ELONGATION · SLOW MOTION',titles[stage],descriptions[stage],`Cycle ${cycle} of 2 is shown slowly so you can follow all three ribosome sites.`,[['Path','A → P → E'],['mRNA step','Three bases']]);}
+  if(p<76){const i=Math.floor(p),aa=AA[sequence[i]];return detail(`current-${i}`,'PAUSED ELONGATION',`Codon ${i+1}: ${codons[i]}.`,`A matching tRNA brings ${aa.name} to the A site. A peptide bond adds it to the chain, then the tRNAs and mRNA move together.`,`This frame is paused so you can inspect the exact molecular details.`,[['Anticodon',anticodon(codons[i])],['Amino acid',aa.name],['Path','A → P → E']]);}
+  if(p<76.45)return detail('stop','TERMINATION','A stop signal arrives.','UAA is a stop codon. It does not recruit a tRNA or add an amino acid.','A release factor recognizes the stop signal and frees the completed chain.',[['Codon','UAA'],['Chain','76 amino acids']]);
+  return proteinDetail;
+}
+function refreshInspector(){showDetail(state.pinned||state.hovered||currentDetail(),!!state.pinned);}
+function setHovered(item,e){state.hovered=item;refreshInspector();if(item&&e){dom.hover.hidden=false;dom.hover.textContent=item.title;const rect=dom.sceneWrap.getBoundingClientRect();dom.hover.style.left=`${Math.min(rect.width-130,Math.max(8,e.clientX-rect.left+13))}px`;dom.hover.style.top=`${Math.min(rect.height-37,Math.max(8,e.clientY-rect.top+11))}px`;}else dom.hover.hidden=true;}
+function pin(item){state.pinned=item;refreshInspector();}
+
+// Every sequence triplet is a keyboard-accessible target, and the entire RNA stays available.
+const codonButtons=codons.map((codon,index)=>{
+  const button=document.createElement('div');button.className=`codon${index===76?' stop':''}`;
+  button.setAttribute('role','group');button.setAttribute('aria-label',`Codon ${index+1}: ${codon}, ${index===76?'stop':AA[sequence[index]].name}`);
+  const letters=document.createElement('span');letters.className='codon-bases';
+  [...codon].forEach((base,baseIndex)=>{const span=document.createElement('button');span.type='button';span.className=`base-${base} base-button`;span.textContent=base;span.setAttribute('aria-label',`${baseNames[base]}, base ${baseIndex+1} in codon ${index+1}`);span.addEventListener('pointerenter',()=>{state.hovered=baseDetail(base,index,baseIndex);refreshInspector();});span.addEventListener('focus',()=>{state.hovered=baseDetail(base,index,baseIndex);refreshInspector();});span.addEventListener('click',e=>{e.stopPropagation();pin(baseDetail(base,index,baseIndex));});letters.append(span);});
+  const number=document.createElement('button');number.type='button';number.className='codon-number';number.textContent=index===76?'STOP':String(index+1).padStart(2,'0');number.setAttribute('aria-label',`Jump to codon ${index+1}: ${codon}`);button.append(letters,number);
+  function jump(){setProgress(index===76?76.2:index===0?.5:index+.22);state.playing=false;syncPlay();pin(codonDetail(index));}
+  number.addEventListener('click',e=>{e.stopPropagation();jump();});button.addEventListener('click',jump);
+  number.addEventListener('focus',()=>{state.hovered=codonDetail(index);refreshInspector();});
+  number.addEventListener('pointerenter',()=>{state.hovered=codonDetail(index);refreshInspector();});
+  button.addEventListener('pointerleave',()=>{state.hovered=null;refreshInspector();});
+  button.addEventListener('blur',()=>{state.hovered=null;refreshInspector();});
+  dom.track.append(button);return button;
+});
+
+const catalogOrder='ARNDCQEGHILKMFPSTWYV';
+catalogOrder.split('').forEach(letter=>{
+  const aa=AA[letter],button=document.createElement('button');button.className='amino-card';button.type='button';button.setAttribute('aria-label',`${aa.name}, example codon ${aa.codon}`);button.innerHTML=`<strong>${letter}</strong><span>${aa.name}</span>`;
+  button.addEventListener('click',()=>selectCatalog(letter));button.addEventListener('pointerenter',()=>{state.hovered=aminoDetail(letter);refreshInspector();});button.addEventListener('focus',()=>{state.hovered=aminoDetail(letter);refreshInspector();});button.addEventListener('pointerleave',()=>{state.hovered=null;refreshInspector();});button.addEventListener('blur',()=>{state.hovered=null;refreshInspector();});dom.catalogGrid.append(button);
+});
+let miniTimers=[];
+function replayMini(){miniTimers.forEach(clearTimeout);miniTimers=[];const init=state.selectedAA==='M';const stops=init?[[141,'P SITE · INITIATION'],[39,'E SITE · EXIT']]:[[342,'A SITE · ARRIVAL'],[141,'P SITE · PEPTIDE'],[39,'E SITE · EXIT']];dom.mini.style.transition='none';dom.mini.style.transform=`translate(${stops[0][0]}px,95px)`;dom.miniText.textContent=stops[0][1];stops.slice(1).forEach(([x,label],i)=>{miniTimers.push(setTimeout(()=>{dom.mini.style.transition=state.reduceMotion?'none':'transform .7s cubic-bezier(.2,.7,.2,1)';dom.mini.style.transform=`translate(${x}px,95px)`;dom.miniText.textContent=label;},900*(i+1)));});}
+function selectCatalog(letter){state.selectedAA=letter;const aa=AA[letter];dom.catalogLetter.textContent=letter;dom.catalogAbbr.textContent=`${aa.abbr.toUpperCase()} · ${letter}`;dom.catalogName.textContent=aa.name;dom.catalogDescription.textContent=letter==='M'?'The initiating amino acid. Its tRNA starts in the P site at AUG.':aa.description;dom.catalogCodon.textContent=aa.codon;dom.catalogAnticodon.textContent=anticodon(aa.codon);dom.catalogNote.textContent=letter==='M'?'For initiation, this carrier starts in the P site. Other tRNAs enter A, shift to P, then leave through E.':'This representative carrier enters A, shifts to P after peptide bond formation, then exits through E.';$('mini-stage').setAttribute('aria-label',letter==='M'?'Initiator tRNA moving from P to E sites':'Selected tRNA moving from A through P to E sites');[...dom.catalogGrid.children].forEach(button=>{const active=button.querySelector('strong').textContent===letter;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});renderAminoModel(letter);replayMini();}
+function initAminoPreview(){
+  const wrap=document.createElement('div');wrap.className='amino-model-wrap';
+  const title=document.createElement('span');title.className='amino-model-label';title.textContent='3D AMINO ACID · DRAG TO ROTATE';
+  const canvas=document.createElement('canvas');canvas.id='amino-model';canvas.setAttribute('aria-label','Rotatable ball-and-stick model of the selected amino acid');
+  const caption=document.createElement('span');caption.className='amino-model-caption';caption.textContent='Atom colors: C green · N blue · O coral · S gold · H cream';
+  wrap.append(title,canvas,caption);document.querySelector('.catalog-title-line').after(wrap);
+  let renderer;try{renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true,powerPreference:'low-power'});}catch(error){console.warn('Amino-acid WebGL preview unavailable',error);canvas.replaceWith(document.createTextNode('3D preview unavailable on this device.'));return;}renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.outputColorSpace=THREE.SRGBColorSpace;
+  const scene=new THREE.Scene(),camera=new THREE.OrthographicCamera(-3.2,3.2,1.7,-1.7,.1,100);camera.position.set(0,0,8);scene.add(new THREE.AmbientLight(0xffffff,2.1));const key=new THREE.DirectionalLight(0xfff3dc,2.5);key.position.set(-3,5,7);scene.add(key);const model=new THREE.Group();scene.add(model);
+  const controls=new OrbitControls(camera,canvas);controls.enablePan=false;controls.enableZoom=false;controls.enableDamping=true;controls.autoRotate=false;
+  aminoPreview={wrap,canvas,renderer,scene,camera,controls,model};
+  function resize(){const width=wrap.clientWidth,height=145;renderer.setSize(width,height,false);const aspect=width/height;camera.left=-1.85*aspect;camera.right=1.85*aspect;camera.top=1.85;camera.bottom=-1.85;camera.updateProjectionMatrix();}
+  new ResizeObserver(resize).observe(wrap);resize();
+  canvas.addEventListener('pointerenter',()=>{state.hovered=aminoDetail(state.selectedAA);refreshInspector();});canvas.addEventListener('pointerleave',()=>{state.hovered=null;refreshInspector();});
+  let down=null;canvas.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY};});canvas.addEventListener('pointerup',e=>{if(down&&Math.hypot(e.clientX-down.x,e.clientY-down.y)<5)pin(aminoDetail(state.selectedAA));down=null;});
+}
+function renderAminoModel(letter){if(!aminoPreview)return;const {model}=aminoPreview;disposeGroup(model);const source=aminoStructures[letter];if(!source)return;const points=source.atoms.map(atom=>new THREE.Vector3(...atom.p));const center=new THREE.Vector3();points.forEach(p=>center.add(p));center.divideScalar(points.length);const furthest=Math.max(...points.map(p=>p.distanceTo(center)));const scale=1.48/furthest;const coords=points.map(p=>p.sub(center).multiplyScalar(scale));const colors={C:0xa7c6a5,H:0xf2eee1,N:0x8ebbd6,O:0xe68b79,S:0xedc76e};
+  source.bonds.forEach(([a,b,order])=>{const start=coords[a],end=coords[b],direction=new THREE.Vector3().subVectors(end,start),length=direction.length(),mid=new THREE.Vector3().addVectors(start,end).multiplyScalar(.5);const normal=new THREE.Vector3().crossVectors(direction,new THREE.Vector3(0,0,1)).normalize();const count=order===2?2:1;for(let i=0;i<count;i++){const bond=new THREE.Mesh(new THREE.CylinderGeometry(.037,.037,length,7),new THREE.MeshStandardMaterial({color:0xb9cdb7,roughness:.72}));bond.position.copy(mid).addScaledVector(normal,count===2?(i?-.055:.055):0);bond.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());model.add(bond);}});
+  source.atoms.forEach((atom,i)=>{const radius=atom.e==='H'?.07:atom.e==='S'?.16:.125;const bead=orb(radius,colors[atom.e],1,14);bead.position.copy(coords[i]);model.add(bead);});model.rotation.set(.14,.15,0);
+}
+initAminoPreview();
+selectCatalog('M');$('catalog-replay').addEventListener('click',replayMini);
+const catalogLayout=document.querySelector('.catalog-layout');
+const catalogDisclosure=document.createElement('details');catalogDisclosure.className='catalog-disclosure';
+const catalogSummary=document.createElement('summary');catalogSummary.innerHTML='<span>Open the 20-amino-acid reference</span><span aria-hidden="true">↗</span>';
+catalogLayout.before(catalogDisclosure);catalogDisclosure.append(catalogSummary,catalogLayout);
+
+let renderer,scene,camera,controls,raycaster,pointer,modelGroup,translationGroup,fullRNA,movingRNA,activeCodonHalo,ribosomeGroup,trnaLayer,chainGroup,foldGroup,particles;
+let currentMeshes=[],foldMaterials=[],ribosomeMaterials=[],chainBeads=[],chainBond;
+let cachedCodonIndex=-99,lastSelection=-1,lastChainLength=-1;
+const siteX={E:-2.45,P:0,A:2.45};
+const codonSpacing=2.45;
+const up=new THREE.Vector3(0,1,0);
+function setPick(object,item,priority=1){object.userData.detail=item;object.userData.priority=priority;return object;}
+function orb(radius,color,opacity=1,segments=16){return new THREE.Mesh(new THREE.SphereGeometry(radius,segments,Math.max(10,segments/2)),new THREE.MeshStandardMaterial({color,roughness:.78,metalness:0,transparent:opacity<1,opacity}));}
+function organic(x,y,z,sx,sy,sz,color,opacity){const geo=new THREE.SphereGeometry(1,40,30),pos=geo.attributes.position;for(let i=0;i<pos.count;i++){const vx=pos.getX(i),vy=pos.getY(i),vz=pos.getZ(i),wave=1+.07*Math.sin(vx*9+vy*5)*Math.sin(vz*7-vy*3)+.035*Math.cos(vx*17+vz*9);pos.setXYZ(i,vx*wave,vy*wave,vz*wave);}geo.computeVertexNormals();const material=new THREE.MeshPhysicalMaterial({color,roughness:.92,transparent:true,opacity,side:THREE.DoubleSide,depthWrite:false});ribosomeMaterials.push([material,opacity]);const mesh=new THREE.Mesh(geo,material);mesh.position.set(x,y,z);mesh.scale.set(sx,sy,sz);setPick(mesh,ribosomeDetail,1);return mesh;}
+function tube(points,radius,color,opacity=1){const curve=new THREE.CatmullRomCurve3(points.map(p=>new THREE.Vector3(...p)));return new THREE.Mesh(new THREE.TubeGeometry(curve,Math.max(16,points.length*9),radius,7,false),new THREE.MeshStandardMaterial({color,roughness:.82,transparent:opacity<1,opacity}));}
+function textSprite(text,color='#f7f8e9',bg='rgba(38,75,59,.86)',scale=[1.35,.62]){const c=document.createElement('canvas');c.width=300;c.height=138;const ctx=c.getContext('2d');ctx.fillStyle=bg;ctx.beginPath();ctx.roundRect(10,10,280,118,37);ctx.fill();ctx.fillStyle=color;ctx.font='bold 63px Georgia';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,150,75);const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:false}));sprite.scale.set(...scale,1);return sprite;}
+function disposeGroup(group){while(group.children.length){const object=group.children[0];group.remove(object);object.traverse(child=>{child.geometry?.dispose();if(child.material){if(Array.isArray(child.material))child.material.forEach(mat=>{mat.map?.dispose();mat.dispose();});else{child.material.map?.dispose();child.material.dispose();}}});}}
+
+function makeTRNA(index,site,opacity=1){const aa=AA[sequence[index]],codon=codons[index];const group=new THREE.Group();const tint=aa.kind==='Acidic'?0xd89b78:aa.kind==='Basic'?0x9bbae1:aa.kind==='Aromatic'?0xe4bc88:0xe3aa80;
+  const stem=tube([[0,0,0],[.02,.5,0],[.16,.97,0],[.48,1.16,.02],[.93,1.17,.05],[1.34,1.3,.08],[1.56,1.84,.1]],.085,0xd6a480,opacity);setPick(stem,trnaDetail(index),4);group.add(stem);
+  const arm=tube([[.16,.97,0],[-.17,1.15,0],[-.56,1.23,-.05],[-.7,1.5,-.05]],.075,0xe9bc93,opacity);setPick(arm,trnaDetail(index),4);group.add(arm);
+  for(let j=0;j<3;j++){const bead=orb(.13,baseColors[anticodon(codon)[j]],opacity,12);bead.position.set((j-1)*.28,-.05,.13);setPick(bead,trnaDetail(index),5);group.add(bead);}
+  const cargo=orb(.22,tint,opacity,16);cargo.position.set(1.58,1.87,.1);setPick(cargo,aminoDetail(sequence[index],index),6);group.add(cargo);group.userData.cargo=cargo;group.userData.site=site;group.userData.index=index;return group;
+}
+function buildMovingRNA(){
+  movingRNA=new THREE.Group();translationGroup.add(movingRNA);
+  const end=76*codonSpacing;
+  const backbone=new THREE.Mesh(new THREE.CylinderGeometry(.095,.095,end+2.3,12),new THREE.MeshStandardMaterial({color:0x385e57,roughness:.8}));
+  backbone.rotation.z=Math.PI/2;backbone.position.set(end/2,-1.29,1.92);setPick(backbone,mrnaDetail,2);movingRNA.add(backbone);
+  const glyphTemplates=Object.fromEntries(Object.keys(baseColors).map(base=>[base,textSprite(base,'#204437','rgba(244,249,228,.87)',[.32,.29])]));
+  codons.forEach((codon,index)=>{
+    const center=index*codonSpacing;
+    [...codon].forEach((base,baseIndex)=>{
+      const x=center+(baseIndex-1)*.34;
+      const sphere=orb(.17,baseColors[base],1,16);sphere.position.set(x,-1.24,2.28);setPick(sphere,baseDetail(base,index,baseIndex),7);movingRNA.add(sphere);
+      const glyph=new THREE.Sprite(glyphTemplates[base].material);glyph.scale.copy(glyphTemplates[base].scale);glyph.position.set(x,-.94,2.48);setPick(glyph,baseDetail(base,index,baseIndex),8);movingRNA.add(glyph);
+    });
+    const hit=orb(.53,0xffffff,.001,10);hit.position.set(center,-1.14,1.8);setPick(hit,codonDetail(index),3);movingRNA.add(hit);
+  });
+  activeCodonHalo=new THREE.Mesh(new THREE.TorusGeometry(.61,.039,8,32),new THREE.MeshBasicMaterial({color:0xf6ce90,transparent:true,opacity:.92,depthTest:false}));
+  activeCodonHalo.position.set(0,-1.23,2.19);movingRNA.add(activeCodonHalo);
+}
+function buildTRNAs(index){disposeGroup(trnaLayer);currentMeshes=[];if(index===0){const starter=makeTRNA(0,'P');trnaLayer.add(starter);currentMeshes.push(starter);return;}if(index>=76){const holder=makeTRNA(75,'P');holder.userData.cargo.visible=false;trnaLayer.add(holder);currentMeshes.push(holder);return;}const prev=makeTRNA(index-1,'P'),current=makeTRNA(index,'A');trnaLayer.add(prev,current);currentMeshes.push(prev,current);if(index>1){const exiting=makeTRNA(index-2,'E',.55);trnaLayer.add(exiting);currentMeshes.push(exiting);}}
+function chainPosition(j){return new THREE.Vector3(1.56-.04*j+.25*Math.sin(j*.48),1.72+.049*j,2.43+.2*Math.cos(j*.39));}
+function buildChain(){const points=[];for(let j=0;j<76;j++){const bead=orb(j===0?.135:.104,0xd2a676,1,12);setPick(bead,aminoDetail(sequence[j],j),8);bead.position.copy(chainPosition(j));bead.visible=false;chainGroup.add(bead);chainBeads.push(bead);points.push(bead.position);}const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(76*3),3));chainBond=new THREE.Line(geometry,new THREE.LineBasicMaterial({color:0xe8c99e,transparent:true,opacity:.9}));chainGroup.add(chainBond);}
+function makeFold(){
+  foldGroup=new THREE.Group();
+  const origin=new THREE.Vector3();
+  for(const item of structure.ca)origin.add(new THREE.Vector3(...item.p));
+  origin.divideScalar(structure.ca.length);
+  const xyz=p=>new THREE.Vector3(...p).sub(origin).multiplyScalar(.18).add(new THREE.Vector3(0,.55,0));
+  const ca=structure.ca.map(item=>xyz(item.p));
+  foldGroup.userData.ca=ca;
+
+  // Residue ranges transcribed from the HELIX and SHEET records in 1UBQ.pdb.
+  const helices=[[23,34],[56,59]];
+  const sheets=[[1,7],[10,17],[40,45],[48,50],[64,72]];
+  const secondary=residue=>{
+    if(helices.some(([first,last])=>residue>=first&&residue<=last))return 'helix';
+    if(sheets.some(([first,last])=>residue>=first&&residue<=last))return 'sheet';
+    return 'loop';
+  };
+  const curve=new THREE.CatmullRomCurve3(ca,false,'centripetal');
+  const subdivisions=8,samples=(ca.length-1)*subdivisions;
+  const frames=curve.computeFrenetFrames(samples,false);
+  const vertices=[],colors=[],indices=[];
+  const palette={helix:new THREE.Color(0xe9ad77),sheet:new THREE.Color(0x94d2bc),loop:new THREE.Color(0xe6dfbd)};
+  for(let i=0;i<=samples;i++){
+    const position=curve.getPoint(i/samples),residue=1+i/subdivisions;
+    const kind=secondary(Math.round(residue));
+    let width=kind==='sheet'?.37:kind==='helix'?.27:.115;
+    // A tapered end makes each measured beta strand read as a ribbon arrow.
+    if(kind==='sheet'){
+      const range=sheets.find(([first,last])=>residue>=first-.5&&residue<=last+.5);
+      if(range&&residue>range[1]-.48)width*=Math.max(.07,(range[1]+.5-residue)/.98);
+    }
+    const side=frames.binormals[i];
+    for(const direction of [-1,1]){
+      const edge=position.clone().addScaledVector(side,direction*width);
+      vertices.push(edge.x,edge.y,edge.z);
+      const shade=direction<0?.84:1;
+      const color=palette[kind].clone().multiplyScalar(shade);
+      colors.push(color.r,color.g,color.b);
+    }
+    if(i<samples){const a=i*2;indices.push(a,a+1,a+2,a+1,a+3,a+2);}
+  }
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));
+  geometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+  geometry.setIndex(indices);geometry.computeVertexNormals();
+  const material=new THREE.MeshStandardMaterial({vertexColors:true,side:THREE.DoubleSide,roughness:.63,metalness:0,transparent:true,opacity:0,depthWrite:false});
+  const ribbon=new THREE.Mesh(geometry,material);
+  setPick(ribbon,proteinDetail,7);foldGroup.add(ribbon);foldMaterials.push(material);
+
+  // Invisible residue targets preserve per-amino-acid inspection on the ribbon.
+  const pickGeometry=new THREE.SphereGeometry(.17,8,6);
+  const pickMaterial=new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false});
+  ca.forEach((point,index)=>{const target=new THREE.Mesh(pickGeometry,pickMaterial);target.position.copy(point);setPick(target,aminoDetail(sequence[index],index),10);foldGroup.add(target);});
+  modelGroup.add(foldGroup);
+}
+function makeModel(){modelGroup=new THREE.Group();scene.add(modelGroup);translationGroup=new THREE.Group();modelGroup.add(translationGroup);ribosomeGroup=new THREE.Group();translationGroup.add(ribosomeGroup);ribosomeGroup.add(organic(-1.8,-1.85,-.28,2.7,1.03,1.15,0x83a98d,.83),organic(1.42,-1.87,-.14,2.42,.97,1.06,0x86ad91,.78),organic(-1.48,.8,-.77,2.43,1.25,1.3,0x5e866e,.67),organic(1.22,1.0,-.64,2.69,1.45,1.5,0x638b70,.64),organic(.35,1.5,-1.26,2.38,.92,1.15,0x719b79,.6));
+  for(const [site,x] of Object.entries(siteX)){const marker=textSprite(site,'#f8fff0','rgba(37,76,57,.94)',[.66,.53]);marker.position.set(x,-.26,2.85);setPick(marker,siteDetail(site),9);translationGroup.add(marker);const halo=orb(.37,site==='A'?0xe6b880:0xb8ddad,.25,16);halo.position.set(x,-.2,1.45);setPick(halo,siteDetail(site),5);translationGroup.add(halo);}
+  buildMovingRNA();trnaLayer=new THREE.Group();translationGroup.add(trnaLayer);chainGroup=new THREE.Group();modelGroup.add(chainGroup);buildChain();makeFold();
+  fullRNA=new THREE.Group();modelGroup.add(fullRNA);const fullPoints=[];for(let i=0;i<codonText.length;i++){const x=-4.65+i/(codonText.length-1)*9.3,y=.32*Math.sin(i*.14)+.21*Math.cos(i*.075),z=1.55+.14*Math.sin(i*.095);fullPoints.push([x,y,z]);const bead=orb(.072,baseColors[codonText[i]],1,8);bead.position.set(x,y,z);setPick(bead,baseDetail(codonText[i],Math.floor(i/3),i%3),6);fullRNA.add(bead);}const fullBackbone=tube(fullPoints.filter((_,i)=>i%3===0),.055,0x345d50,1);setPick(fullBackbone,mrnaDetail,2);fullRNA.add(fullBackbone);
+  particles=new THREE.Group();for(let i=0;i<66;i++){const phi=i*2.3999,r=3.5+(i%8)*.54,x=Math.cos(phi)*r,y=Math.sin(phi*.7)*3.7,z=-2-(i%6)*.45;const mote=orb(.025+(i%3)*.009,i%4===0?0xe5e8c1:0xd7e7d5,.23,6);mote.position.set(x,y,z);particles.add(mote);}scene.add(particles);
+}
+function init3D(){try{renderer=new THREE.WebGLRenderer({canvas:dom.scene,antialias:true,alpha:true,powerPreference:'high-performance'});}catch(error){console.warn('WebGL unavailable',error);dom.fallback.hidden=false;dom.scene.hidden=true;return;}renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.55;scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(42,1,.1,100);scene.add(new THREE.AmbientLight(0xffffff,1.85));const key=new THREE.DirectionalLight(0xfff5da,2.15);key.position.set(-4,7,9);scene.add(key);const rim=new THREE.DirectionalLight(0xa1cfb1,1.25);rim.position.set(6,2,-4);scene.add(rim);controls=new OrbitControls(camera,dom.scene);controls.enableDamping=true;controls.enablePan=false;controls.minDistance=8;controls.maxDistance=28;controls.maxPolarAngle=Math.PI*.78;controls.minPolarAngle=Math.PI*.18;controls.target.set(0,.35,0);raycaster=new THREE.Raycaster();pointer=new THREE.Vector2();makeModel();resize3D();new ResizeObserver(resize3D).observe(dom.sceneWrap);dom.scene.addEventListener('pointermove',onPointerMove);dom.scene.addEventListener('pointerleave',()=>setHovered(null));let press=null;dom.scene.addEventListener('pointerdown',e=>{press={x:e.clientX,y:e.clientY};});dom.scene.addEventListener('pointerup',e=>{if(press&&Math.hypot(e.clientX-press.x,e.clientY-press.y)<5){const item=pickAt(e);if(item)pin(item);}press=null;});}
+function resize3D(){if(!renderer)return;const w=dom.sceneWrap.clientWidth,h=dom.sceneWrap.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;const halfHeight=5.8,halfWidth=5.6;const fov=camera.fov*Math.PI/180;const distance=Math.max(halfHeight/Math.tan(fov/2),halfWidth/(Math.tan(fov/2)*camera.aspect));camera.position.set(0,1.15,distance);camera.updateProjectionMatrix();controls.update();}
+function pickAt(event){if(!renderer)return null;const rect=dom.scene.getBoundingClientRect();pointer.x=((event.clientX-rect.left)/rect.width)*2-1;pointer.y=-((event.clientY-rect.top)/rect.height)*2+1;raycaster.setFromCamera(pointer,camera);const hits=raycaster.intersectObjects(modelGroup.children,true);let best=null,score=-1;for(const hit of hits){const object=hit.object;let item=object.userData.detail;let priority=object.userData.priority||0;if(object.userData.atomMap&&hit.instanceId!==undefined){const atom=object.userData.atomMap[hit.instanceId];item=aminoDetail(sequence[atom.r-1],atom.r-1);priority=10;}if(item){const candidate=priority-hit.distance*.015;if(candidate>score){best=item;score=candidate;}}}return best;}
+function onPointerMove(e){const item=pickAt(e);if(item?.id!==state.hovered?.id)setHovered(item,e);else if(item&&e) setHovered(item,e);dom.scene.style.cursor=item?'pointer':'grab';}
+
+function update3D(){if(!renderer)return;const p=state.progress;let index=Math.floor(Math.min(p,76));if(p<1)index=0;const phase=p-index;const foldT=Math.max(0,Math.min(1,(p-76.44)/.56));if(index!==cachedCodonIndex){buildTRNAs(index);cachedCodonIndex=index;}
+  const introT=THREE.MathUtils.smoothstep(p,.1,.63),active=p>=.1;translationGroup.visible=active&&foldT<.98;fullRNA.visible=p<.5;fullRNA.position.y=-.83*introT;fullRNA.scale.y=1-.4*introT;ribosomeGroup.visible=active;trnaLayer.visible=active&&p<76.8;chainGroup.visible=active;translationGroup.traverse(object=>{const mat=object.material;if(mat&&!Array.isArray(mat)){if(mat.userData.originalOpacity===undefined)mat.userData.originalOpacity=mat.opacity;mat.transparent=true;mat.opacity=mat.userData.originalOpacity*introT*(1-foldT);}});if(fullRNA.visible)fullRNA.traverse(object=>{const mat=object.material;if(mat&&!Array.isArray(mat)){if(mat.userData.originalOpacity===undefined)mat.userData.originalOpacity=mat.opacity;mat.transparent=true;mat.opacity=mat.userData.originalOpacity*(1-THREE.MathUtils.smoothstep(p,.04,.5));}});
+  const f=state.reduceMotion?(phase>=.62?1:0):phase;
+  const translocation=THREE.MathUtils.smoothstep(f,.62,.96);
+  movingRNA.position.x=index===0?5.25*(1-THREE.MathUtils.smoothstep(p,.1,.85)):(1-index)*codonSpacing-(index<76?codonSpacing*translocation:0);
+  activeCodonHalo.position.x=index*codonSpacing;activeCodonHalo.material.color.setHex(index===76?0xf1a38b:0xf6ce90);
+  if(index===0&&currentMeshes[0]){currentMeshes[0].position.set(0,-.38,2.38);currentMeshes[0].scale.setScalar(p<.22?.001:Math.min(1,Math.max(.05,(p-.2)*2)));}
+  if(index===76&&currentMeshes[0]){currentMeshes[0].position.set(0,-.38,2.38);currentMeshes[0].scale.setScalar(1-THREE.MathUtils.smoothstep(p,76.46,76.8));}
+  if(index>0&&index<76){const [prev,current,exiting]=currentMeshes;prev.position.set(siteX.P+(siteX.E-siteX.P)*translocation,-.38,2.38);current.position.set(4.8+(siteX.A-4.8)*THREE.MathUtils.smoothstep(f,.02,.26)+(siteX.P-siteX.A)*translocation,-.38,2.38);current.userData.cargo.visible=f<.48;prev.userData.cargo.visible=false;if(exiting){exiting.position.set(siteX.E-1.4*THREE.MathUtils.smoothstep(f,.2,.9),-.38,2.38);exiting.scale.setScalar(.76*(1-THREE.MathUtils.smoothstep(f,.35,.95)));}}
+  // Once the peptide bond forms, the chain rides the A-site tRNA into P.
+  chainGroup.position.x=index>0&&index<76?codonSpacing*THREE.MathUtils.smoothstep(f,.44,.61)*(1-translocation):0;
+  let chainLength=p<.52?0:p<1?1:p<76?Math.min(76,Math.floor(p)+((phase>.49||state.reduceMotion)?1:0)):76;
+  if(chainLength!==lastChainLength||foldT>0){for(let j=0;j<76;j++){const bead=chainBeads[j];bead.visible=j<chainLength;const start=chainPosition(j),end=foldGroup.userData.ca[j];bead.position.copy(start).lerp(end,foldT);bead.material.opacity=1-foldT*.15;const attr=chainBond.geometry.attributes.position;attr.setXYZ(j,bead.position.x,bead.position.y,bead.position.z);}chainBond.geometry.setDrawRange(0,chainLength);chainBond.geometry.attributes.position.needsUpdate=true;lastChainLength=chainLength;}
+  foldGroup.visible=foldT>.72;foldMaterials.forEach(mat=>mat.opacity=Math.max(0,(foldT-.72)/.28));chainGroup.visible=active&&foldT<.995;
+  controls.update();renderer.render(scene,camera);
+}
+function formatCaption(p){if(p<.14)return 'A complete mRNA message carries the instructions, read three bases at a time.';if(p<.65)return 'The 5′ end of the mRNA enters the ribosome and slides toward the P site.';if(p<1)return 'AUG reaches P. The initiator tRNA pairs with the start codon.';if(p<3){const phase=p%1;if(phase<.26)return '1 · A charged tRNA enters the A site beside the chain-carrying tRNA in P.';if(phase<.44)return '2 · Its anticodon pairs with the codon in the A site.';if(phase<.62)return '3 · A peptide bond extends the growing chain.';return '4 · tRNAs move A → P → E as mRNA slides exactly one codon.';}if(p<76)return 'The same A → P → E cycle repeats rapidly while mRNA moves through the ribosome.';if(p<76.44)return 'UAA reaches A. No tRNA pairs with this stop codon.';if(p<76.7)return 'The completed chain releases from the P-site tRNA.';if(p<77)return 'The free chain leaves the ribosome and approaches its measured fold.';return 'The finished protein is shown as a 1UBQ backbone ribbon; the folding path is illustrative.';}
+function chainCount(p){return p<.52?0:p<1?1:p<76?Math.min(76,Math.floor(p)+(p%1>.49?1:0)):76;}
+function pausedAction(p){if(p<1)return 'mRNA entry and start recognition';if(p<76){const phase=p%1;return phase<.26?'tRNA entering A':phase<.44?'codon–anticodon pairing':phase<.62?'peptide bond forming':'A → P → E translocation';}return p<76.45?'stop codon in A':p<77?'chain release and folding':'folded protein';}
+function updatePauseReadout(){
+  const p=state.progress;
+  dom.pauseReadout.hidden=state.playing||p<.14;
+  if(dom.pauseReadout.hidden)return;
+  const index=Math.min(76,Math.floor(p)),stop=index===76;
+  const rows=[['mRNA codon',codons[index]],['tRNA anticodon',stop?'none':anticodon(codons[index])],['Amino acid',stop?'none added':AA[sequence[index]].name],['Action',pausedAction(p)],['Chain length',`${chainCount(p)} / 76`]];
+  dom.pauseReadout.innerHTML=`<span class="pause-eyebrow">PAUSED FRAME · CODON ${index+1} / 77</span>${rows.map(([name,value])=>`<div><span>${name}</span><strong>${value}</strong></div>`).join('')}`;
+}
+function updateUI(){
+  const p=state.progress,index=Math.min(76,Math.floor(p));
+  const phase=p<.14?'THE MESSAGE':p<1?'INITIATION · mRNA ENTRY':p<2?'ELONGATION · CYCLE 1 SLOW':p<3?'ELONGATION · CYCLE 2 SLOW':p<76?'ELONGATION · RAPID REPEAT':p<76.44?'STOP CODON':p<77?'RELEASE AND FOLD':'FOLDED PROTEIN';
+  dom.phase.textContent=phase;dom.progressPhase.textContent=phase;
+  const rapid=state.playing&&p>=3&&p<76;
+  dom.codon.textContent=p>=77?'1UBQ':p<.14?'5′→3′':rapid?'A→P→E':codons[index];
+  dom.amino.textContent=p>=77?'Folded ubiquitin · ribbon':p<.14?'A · U · G · C · 231 bases':rapid?'REPEATING CYCLE':index===76?'Stop signal':`${AA[sequence[index]].name} · ${AA[sequence[index]].abbr}`;
+  dom.chain.innerHTML=`${chainCount(p)} <small>/ 76 residues</small>`;
+  dom.caption.textContent=formatCaption(p);
+  dom.timeline.value=String(state.playheadSeconds);dom.timeline.style.setProperty('--progress',`${state.playheadSeconds/totalSeconds*100}%`);
+  dom.count.textContent=`${String(Math.min(77,Math.max(0,Math.ceil(p)))).padStart(2,'0')} / 77 CODONS`;
+  if(index!==lastSelection){codonButtons.forEach((button,i)=>{button.classList.toggle('active',i===index);button.classList.toggle('played',i<index);button.setAttribute('aria-current',i===index?'step':'false');});const target=codonButtons[index];if(target){const trackBox=dom.track.getBoundingClientRect(),targetBox=target.getBoundingClientRect();const left=targetBox.left-trackBox.left+dom.track.scrollLeft-dom.track.clientWidth/2+targetBox.width/2;const distant=Math.abs(left-dom.track.scrollLeft)>dom.track.clientWidth*.7;dom.track.scrollTo({left,behavior:state.reduceMotion||distant?'instant':'smooth'});}lastSelection=index;}
+  refreshInspector();updatePauseReadout();
+}
+function setProgress(value){state.progress=Math.max(0,Math.min(77,value));state.playheadSeconds=progressToSeconds(state.progress);updateUI();update3D();syncPlay();}
+function syncPlay(){dom.playIcon.textContent=state.playing?'Ⅱ':'▶';dom.playText.textContent=state.playing?'Pause sequence':state.progress>=77?'Replay sequence':'Play sequence';dom.play.setAttribute('aria-label',dom.playText.textContent);}
+dom.play.addEventListener('click',()=>{if(state.progress>=77)setProgress(0);state.playing=!state.playing;syncPlay();updateUI();});
+$('restart').addEventListener('click',()=>{state.playing=false;syncPlay();setProgress(0);state.pinned=null;refreshInspector();});
+$('previous').addEventListener('click',()=>{state.playing=false;syncPlay();const current=Math.floor(state.progress);setProgress(current<=1?.5:current-1+.42);});
+$('next').addEventListener('click',()=>{state.playing=false;syncPlay();const current=Math.floor(state.progress);setProgress(current>=76?77:current+1+.42);});
+dom.timeline.addEventListener('input',()=>{state.playing=false;syncPlay();setProgress(secondsToProgress(Number(dom.timeline.value)));});
+dom.speed.addEventListener('change',()=>{state.speed=Number(dom.speed.value);});
+dom.unpin.addEventListener('click',()=>{state.pinned=null;refreshInspector();});
+$('object-select').addEventListener('change',event=>{const choice=event.target.value,index=Math.min(76,Math.floor(state.progress));const items={mrna:mrnaDetail,ribosome:ribosomeDetail,E:siteDetail('E'),P:siteDetail('P'),A:siteDetail('A'),trna:index===76?codonDetail(76):trnaDetail(index),residue:aminoDetail(sequence[Math.min(75,index)],Math.min(75,index)),chain:chainDetail,protein:proteinDetail};if(items[choice])pin(items[choice]);event.target.value='';});
+document.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;if(e.code==='Space'&&document.activeElement===document.body){e.preventDefault();dom.play.click();}if(e.code==='ArrowRight'&&document.activeElement===document.body)$('next').click();if(e.code==='ArrowLeft'&&document.activeElement===document.body)$('previous').click();});
+matchMedia('(prefers-reduced-motion: reduce)').addEventListener?.('change',e=>{state.reduceMotion=e.matches;});
+init3D();updateUI();update3D();syncPlay();
+let lastTime=performance.now();function frame(now){const dt=Math.min(.09,(now-lastTime)/1000);lastTime=now;if(state.playing){state.playheadSeconds=Math.min(totalSeconds,state.playheadSeconds+dt*state.speed);state.progress=secondsToProgress(state.playheadSeconds);if(state.progress>=77){state.progress=77;state.playing=false;syncPlay();}updateUI();}if(particles&&!state.reduceMotion){particles.rotation.z+=dt*.006;}update3D();if(aminoPreview){aminoPreview.controls.update();aminoPreview.renderer.render(aminoPreview.scene,aminoPreview.camera);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
+
+// A small public hook supports deterministic browser checks without exposing app internals.
+window.translationLesson={sequence,codons,aminoAcids:AA,structureId:structure.pdb,setProgress,getProgress:()=>state.progress,getPlayheadSeconds:()=>state.playheadSeconds,getRNAOffset:()=>movingRNA?.position.x,secondsToProgress,progressToSeconds,playbackSegments};

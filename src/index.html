@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#e8eee5">
+    <meta name="description" content="An interactive, offline lesson on mRNA translation and protein folding.">
+    <title>Translation, in motion · MBIO 240</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23203631'/%3E%3Cpath d='M13 38c12-24 26 24 38-12' fill='none' stroke='%23b6dfaa' stroke-width='6' stroke-linecap='round'/%3E%3Ccircle cx='49' cy='26' r='5' fill='%23f0bd82'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="styles.css">
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>MOLECULAR ATLAS <small>/ MBIO 240</small></span></div>
+        <span class="header-note">An interactive translation study</span>
+      </header>
+
+      <main>
+        <section class="intro" aria-labelledby="page-title">
+          <div>
+            <p class="eyebrow"><span class="eyebrow-dot"></span> FROM MESSAGE TO MOLECULE</p>
+            <h1 id="page-title">Translation, <em>in motion.</em></h1>
+            <p class="intro-copy">Follow one mRNA message through a ribosome, one codon at a time. Inspect the molecules that turn its code into a protein.</p>
+          </div>
+          <div class="intro-index" aria-label="Lesson overview"><span>01 / THE MESSAGE</span><span>02 / THE RIBOSOME</span><span>03 / THE CHAIN</span></div>
+        </section>
+
+        <section class="workbench" aria-label="Interactive translation model">
+          <div class="scene-column">
+            <div class="scene-topline">
+              <span class="section-label">LIVE MODEL <span class="live-dot"></span></span>
+              <span id="stage-phase">READY TO BEGIN</span>
+              <span class="scene-hint">DRAG TO ROTATE · SCROLL TO ZOOM</span>
+            </div>
+            <div class="scene-wrap" id="scene-wrap">
+              <canvas id="scene" aria-label="Rotatable three-dimensional ribosome and molecular translation animation"></canvas>
+              <div class="scene-fallback" id="scene-fallback" hidden>3D is unavailable in this browser. The codon timeline and molecule details below remain available.</div>
+              <div class="scene-grain" aria-hidden="true"></div>
+              <div class="scene-left-tag"><span class="micro-label">CURRENT FOCUS</span><strong id="scene-codon">AUG</strong><span id="scene-amino">Methionine · Met</span></div>
+              <div class="scene-right-tag" id="scene-right-tag"><span class="micro-label">POLYPEPTIDE</span><strong id="scene-chain-count">0 <small>/ 76 residues</small></strong></div>
+              <div class="scene-caption" id="scene-caption" aria-live="polite">A messenger RNA strand carries instructions in groups of three bases, called codons.</div>
+              <div class="hover-label" id="hover-label" hidden></div>
+              <div class="scene-corner tl"></div><div class="scene-corner tr"></div><div class="scene-corner bl"></div><div class="scene-corner br"></div>
+            </div>
+            <div class="transport" aria-label="Animation controls">
+              <button class="icon-button" id="restart" type="button" aria-label="Restart animation" title="Restart">↺</button>
+              <button class="icon-button" id="previous" type="button" aria-label="Previous codon" title="Previous codon">←</button>
+              <button class="play-button" id="play" type="button" aria-label="Play animation"><span id="play-icon">▶</span><span id="play-text">Play sequence</span></button>
+              <button class="icon-button" id="next" type="button" aria-label="Next codon" title="Next codon">→</button>
+              <div class="progress-block"><div class="progress-meta"><span id="progress-phase">THE MESSAGE</span><span id="progress-count">00 / 77 CODONS</span></div><input id="timeline" type="range" min="0" max="77" value="0" step="0.01" aria-label="Scrub through translation timeline"><div class="timeline-marks"><span>mRNA</span><span>initiation</span><span>elongation</span><span>stop</span><span>fold</span></div></div>
+              <label class="speed-control">SPEED <select id="speed" aria-label="Animation speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+            </div>
+          </div>
+
+          <aside class="inspector" aria-labelledby="inspector-title">
+            <div class="inspector-header"><span class="section-label">FIELD NOTES</span><span class="inspector-counter">01 — 04</span></div>
+            <div class="inspector-body">
+              <div class="phase-pictogram" aria-hidden="true"><span></span><span></span><span></span></div>
+              <p class="small-overline" id="inspector-kicker">THE BIG PICTURE</p>
+              <h2 id="inspector-title">A message becomes matter.</h2>
+              <p id="inspector-description">The ribosome reads mRNA three bases at a time. Each codon determines which amino acid joins the growing chain.</p>
+              <div class="fact-card" id="inspector-fact"><span class="fact-line"></span><p>Hover, focus, or tap a molecule to inspect it. Click to keep its details here.</p></div>
+              <div class="inspector-data" id="inspector-data"></div>
+              <div class="pause-readout" id="pause-readout" hidden aria-live="polite"></div>
+              <label class="inspect-jump">INSPECT A PART
+                <select id="object-select" aria-label="Inspect a molecule or ribosome site">
+                  <option value="">Choose an object…</option><option value="mrna">mRNA strand</option><option value="ribosome">Ribosome</option><option value="E">E site</option><option value="P">P site</option><option value="A">A site</option><option value="trna">Current tRNA</option><option value="residue">Current amino acid</option><option value="chain">Polypeptide chain</option><option value="protein">Folded protein</option>
+                </select>
+              </label>
+            </div>
+            <div class="inspector-footer"><span id="pin-state">FOLLOWING THE ANIMATION</span><button id="unpin" type="button" hidden>Unpin detail ×</button></div>
+          </aside>
+        </section>
+
+        <section class="sequence-section" aria-labelledby="sequence-title">
+          <div class="section-heading"><div><p class="eyebrow">THE FULL MESSAGE</p><h2 id="sequence-title">A sequence with direction.</h2></div><p>One possible mRNA encoding the 76-residue ubiquitin chain. Select any codon to jump to it.</p></div>
+          <div class="sequence-shell"><div class="sequence-axis"><span>5′ START</span><span>3′ END</span></div><div class="sequence-track" id="sequence-track" role="group" aria-label="Complete mRNA sequence, codon by codon"></div><div class="sequence-legend"><span><i class="base-a"></i>Adenine · A</span><span><i class="base-u"></i>Uracil · U</span><span><i class="base-g"></i>Guanine · G</span><span><i class="base-c"></i>Cytosine · C</span><span class="legend-note">RNA uses U, not T</span></div></div>
+        </section>
+
+        <section class="catalog-section" aria-labelledby="catalog-title"><div class="section-heading catalog-heading"><div><p class="eyebrow">OPTIONAL MOLECULAR REFERENCE</p><h2 id="catalog-title">Explore the carriers.</h2></div><p>Open this reference to inspect one representative tRNA pairing for each amino acid. More than one codon or tRNA can correspond to an amino acid.</p></div>
+          <div class="catalog-layout"><div class="catalog-grid" id="catalog-grid" role="group" aria-label="Twenty amino acid representatives"></div><div class="catalog-detail"><div class="catalog-detail-head"><span class="section-label">tRNA DETAIL</span><button id="catalog-replay" type="button" aria-label="Replay selected tRNA through A, P, and E sites">↺ Replay path</button></div><div class="catalog-title-line"><span id="catalog-letter">M</span><div><span class="small-overline" id="catalog-abr">MET · M</span><h3 id="catalog-name">Methionine</h3></div></div><p id="catalog-description">The initiating amino acid. Its tRNA starts directly in the P site at the AUG start codon.</p><div class="pairing"><div><span>mRNA CODON</span><strong id="catalog-codon">AUG</strong></div><span class="pairing-lines" aria-hidden="true">│││</span><div><span>tRNA ANTICODON</span><strong id="catalog-anticodon">UAC</strong></div></div><div class="mini-animation"><div class="mini-stage-labels"><span>E <small>EXIT</small></span><span>P <small>PEPTIDE</small></span><span>A <small>ARRIVAL</small></span></div><svg id="mini-stage" viewBox="0 0 420 138" role="img" aria-label="Selected tRNA moving through ribosome A, P and E sites"><path class="mini-ribosome" d="M24 69 C38 27, 94 28, 136 43 C184 11, 239 22, 270 39 C330 17, 385 36, 397 75 C382 112, 307 120, 274 101 C223 125, 174 115, 138 102 C82 120, 33 108, 24 69 Z"/><path class="mini-rna" d="M2 107 H418"/><g id="mini-trna"><path d="M0 0 V-33 L-17 -53 M0 -33 L18 -53 M0 -5 L-11 7 M0 -5 L11 7" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cy="-57" r="10" fill="currentColor"/><circle cy="9" r="3" fill="#f5f1df"/></g><text id="mini-site-text" x="210" y="132">A → P → E</text></svg></div><div class="catalog-note" id="catalog-note">For initiation, this carrier is placed in the P site first. Later tRNAs enter at A, shift to P, then leave through E.</div></div></div>
+        </section>
+      </main>
+
+      <footer class="site-footer"><span>MOLECULAR ATLAS / MBIO 240</span><span>Protein: <a href="https://www.rcsb.org/structure/1UBQ" target="_blank" rel="noreferrer">PDB 1UBQ</a> · Amino acids: <a href="https://pubchem.ncbi.nlm.nih.gov/" target="_blank" rel="noreferrer">PubChem</a> · Mechanism: <a href="https://www.ncbi.nlm.nih.gov/books/NBK9849/" target="_blank" rel="noreferrer">NCBI Bookshelf</a></span><span>The folding motion is illustrative; the final coordinates are measured.</span></footer>
+    </div>
+  </body>
+</html>
