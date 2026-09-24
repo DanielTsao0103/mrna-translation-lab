@@ -75,6 +75,7 @@ const ribosomeDetail=detail('ribosome','RIBOSOME','The protein-making machine','
 const mrnaDetail=detail('mrna','MESSENGER RNA','A coded message','This example mRNA contains 76 amino-acid codons followed by a UAA stop codon.','Its 231 bases are read in groups of three, moving 5′ → 3′.',[['Bases','A · U · G · C'],['Length','231 bases']]);
 const chainDetail=detail('chain','POLYPEPTIDE','A chain under construction','The ribosome joins amino acids with peptide bonds. The chain grows as each codon is translated.','The precise order of amino acids determines the protein’s possible structure.',[['Target length','76 residues'],['Bond','Peptide bond']]);
 const proteinDetail=detail('protein','FINISHED PROTEIN','Ubiquitin, folded','The final ribbon follows measured backbone coordinates from Protein Data Bank entry 1UBQ. Its colors mark helices, sheets, and connecting loops.','The motion into the final shape is illustrative; 1UBQ records the folded structure, not its folding pathway.',[['Residues','76'],['Structure','PDB 1UBQ'],['Model','Backbone ribbon']]);
+const releaseFactorDetail=detail('releaseFactor','TERMINATION','Release factor','At UAA, a protein release factor recognizes the stop codon in the A site. No tRNA reads this codon.','The factor promotes hydrolysis of the bond linking the completed chain to the P-site tRNA.',[['Signal','UAA'],['Site','A'],['Result','Chain release']]);
 
 function showDetail(item,pinned=false){
   const key=`${item.id}:${pinned}`;
@@ -107,7 +108,8 @@ function visibleParts(progress=state.progress){
     mrna:progress<.48||ribosome,
     ribosome,
     E:ribosome,P:ribosome,A:ribosome,
-    trna:ribosome&&progress>=.23&&progress<76.75,
+    trna:ribosome&&progress>=.23&&progress<76.68,
+    releaseFactor:ribosome&&progress>76.1&&progress<76.76,
     residue:progress<76&&progress>=.23,
     chain:chainCount(progress)>0&&fold<.995,
     protein:fold>.76
@@ -120,13 +122,16 @@ function isDetailPresent(item){
   if(id==='chain')return parts.chain;
   if(id==='mrna')return parts.mrna;
   if(id==='ribosome')return parts.ribosome;
+  if(id==='releaseFactor')return parts.releaseFactor;
   if(id.startsWith('site-'))return parts[id.slice(5)];
   // All codons and bases remain visible in the separate full-sequence strip.
   if(id.startsWith('codon-')||id.startsWith('base-'))return true;
   if(id.startsWith('trna-')){
     if(!parts.trna)return false;
     const trnaIndex=Number(id.slice(5)),active=Math.min(76,Math.floor(p));
-    return active===0?trnaIndex===0:active===76?trnaIndex===75:[active,active-1,active-2].includes(trnaIndex);
+    if(active===0)return trnaIndex===0;
+    if(active===76)return trnaIndex===75;
+    return trnaIndex===active||trnaIndex===active-1||trnaIndex===active-2&&p%1<.82;
   }
   if(id.startsWith('aa-')){
     const residue=id.split('-')[2];
@@ -194,8 +199,9 @@ const catalogDisclosure=document.createElement('details');catalogDisclosure.clas
 const catalogSummary=document.createElement('summary');catalogSummary.innerHTML='<span>Open the 20-amino-acid reference</span><span aria-hidden="true">↗</span>';
 catalogLayout.before(catalogDisclosure);catalogDisclosure.append(catalogSummary,catalogLayout);
 
-let renderer,scene,camera,controls,raycaster,pointer,modelGroup,translationGroup,fullRNA,movingRNA,activeCodonHalo,ribosomeGroup,trnaLayer,chainGroup,foldGroup,particles;
+let renderer,scene,camera,controls,raycaster,pointer,modelGroup,translationGroup,fullRNA,movingRNA,activeCodonHalo,ribosomeGroup,trnaLayer,releaseFactorGroup,chainGroup,foldGroup,particles;
 let currentMeshes=[],foldMaterials=[],ribosomeMaterials=[],chainBeads=[],chainBond;
+const trnaCache=new Map();
 let hoverPick=null,hoverRoot=null,lastScenePointer=null,lastHoverSample=0;
 let hoverBackups=[];
 let cachedCodonIndex=-99,lastSelection=-1,lastChainLength=-1;
@@ -209,11 +215,15 @@ function tube(points,radius,color,opacity=1){const curve=new THREE.CatmullRomCur
 function textSprite(text,color='#f7f8e9',bg='rgba(38,75,59,.86)',scale=[1.35,.62]){const c=document.createElement('canvas');c.width=300;c.height=138;const ctx=c.getContext('2d');ctx.fillStyle=bg;ctx.beginPath();ctx.roundRect(10,10,280,118,37);ctx.fill();ctx.fillStyle=color;ctx.font='bold 63px Georgia';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,150,75);const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:false}));sprite.scale.set(...scale,1);return sprite;}
 function disposeGroup(group){while(group.children.length){const object=group.children[0];group.remove(object);object.traverse(child=>{child.geometry?.dispose();if(child.material){if(Array.isArray(child.material))child.material.forEach(mat=>{mat.map?.dispose();mat.dispose();});else{child.material.map?.dispose();child.material.dispose();}}});}}
 
-function makeTRNA(index,site,opacity=1){const aa=AA[sequence[index]],codon=codons[index];const group=new THREE.Group();const tint=aa.kind==='Acidic'?0xd89b78:aa.kind==='Basic'?0x9bbae1:aa.kind==='Aromatic'?0xe4bc88:0xe3aa80;
-  const stem=tube([[0,0,0],[.02,.5,0],[.16,.97,0],[.48,1.16,.02],[.93,1.17,.05],[1.34,1.3,.08],[1.56,1.84,.1]],.085,0xd6a480,opacity);setPick(stem,trnaDetail(index),4);group.add(stem);
-  const arm=tube([[.16,.97,0],[-.17,1.15,0],[-.56,1.23,-.05],[-.7,1.5,-.05]],.075,0xe9bc93,opacity);setPick(arm,trnaDetail(index),4);group.add(arm);
-  for(let j=0;j<3;j++){const bead=orb(.13,baseColors[anticodon(codon)[j]],opacity,12);bead.position.set((j-1)*.28,-.05,.13);setPick(bead,trnaDetail(index),5);group.add(bead);}
-  const cargo=orb(.22,tint,opacity,16);cargo.position.set(1.58,1.87,.1);setPick(cargo,aminoDetail(sequence[index],index),6);group.add(cargo);group.userData.cargo=cargo;group.userData.site=site;group.userData.index=index;group.traverse(object=>{if(object!==group&&object!==cargo)object.userData.highlightRoot=group;});return group;
+function makeTRNA(index){const aa=AA[sequence[index]],codon=codons[index];const group=new THREE.Group();const tint=aa.kind==='Acidic'?0xd89b78:aa.kind==='Basic'?0x9bbae1:aa.kind==='Aromatic'?0xe4bc88:0xe3aa80;
+  const stem=tube([[0,0,0],[.02,.5,0],[.16,.97,0],[.48,1.16,.02],[.93,1.17,.05],[1.34,1.3,.08],[1.56,1.84,.1]],.085,0xd6a480);setPick(stem,trnaDetail(index),4);group.add(stem);
+  const arm=tube([[.16,.97,0],[-.17,1.15,0],[-.56,1.23,-.05],[-.7,1.5,-.05]],.075,0xe9bc93);setPick(arm,trnaDetail(index),4);group.add(arm);
+  for(let j=0;j<3;j++){const bead=orb(.13,baseColors[anticodon(codon)[j]],1,12);bead.position.set((j-1)*.28,-.05,.13);setPick(bead,trnaDetail(index),5);group.add(bead);}
+  // Three short bridges align the 3′→5′ anticodon with the 5′→3′ mRNA codon.
+  const pairing=new THREE.Group();
+  for(let j=0;j<3;j++){const bridge=new THREE.Mesh(new THREE.CylinderGeometry(.018,.018,.75,7),new THREE.MeshBasicMaterial({color:0xffedb9,transparent:true,opacity:0,depthWrite:false}));bridge.position.set((j-1)*.31,-.45,.015);bridge.rotation.z=(j-1)*.08;setPick(bridge,trnaDetail(index),5);pairing.add(bridge);}
+  group.add(pairing);
+  const cargo=orb(.22,tint,1,16);cargo.position.set(1.58,1.87,.1);setPick(cargo,aminoDetail(sequence[index],index),6);group.add(cargo);group.userData.cargo=cargo;group.userData.pairing=pairing;group.userData.index=index;group.traverse(object=>{if(object!==group&&object!==cargo)object.userData.highlightRoot=group;});return group;
 }
 function buildMovingRNA(){
   movingRNA=new THREE.Group();translationGroup.add(movingRNA);
@@ -233,7 +243,23 @@ function buildMovingRNA(){
   activeCodonHalo=new THREE.Mesh(new THREE.TorusGeometry(.61,.039,8,32),new THREE.MeshBasicMaterial({color:0xf6ce90,transparent:true,opacity:.92,depthTest:false}));
   activeCodonHalo.position.set(0,-1.23,2.19);setPick(activeCodonHalo,codonDetail(0),5);movingRNA.add(activeCodonHalo);
 }
-function buildTRNAs(index){if(hoverPick&&trnaLayer.getObjectById(hoverPick.object.id))clearModelHighlight();disposeGroup(trnaLayer);currentMeshes=[];if(index===0){const starter=makeTRNA(0,'P');trnaLayer.add(starter);currentMeshes.push(starter);return;}if(index>=76){const holder=makeTRNA(75,'P');holder.userData.cargo.visible=false;trnaLayer.add(holder);currentMeshes.push(holder);return;}const prev=makeTRNA(index-1,'P'),current=makeTRNA(index,'A');trnaLayer.add(prev,current);currentMeshes.push(prev,current);if(index>1){const exiting=makeTRNA(index-2,'E',.55);exiting.userData.cargo.visible=false;trnaLayer.add(exiting);currentMeshes.push(exiting);}}
+function cachedTRNA(index){if(!trnaCache.has(index))trnaCache.set(index,makeTRNA(index));return trnaCache.get(index);}
+function buildTRNAs(index){
+  if(hoverPick&&trnaLayer.getObjectById(hoverPick.object.id))clearModelHighlight();
+  // Reparent the same tRNA across A → P → E. Recreating meshes here caused a visible hitch.
+  trnaLayer.clear();currentMeshes=[];
+  const indices=index===0?[0]:index>=76?[75]:index>1?[index-1,index,index-2]:[index-1,index];
+  for(const trnaIndex of indices){const group=cachedTRNA(trnaIndex);group.scale.setScalar(1);group.userData.cargo.visible=trnaIndex===index&&index<76;group.userData.pairing.visible=false;trnaLayer.add(group);currentMeshes.push(group);}
+}
+function setPairing(group,strength){const pairing=group?.userData.pairing;if(!pairing)return;pairing.visible=strength>.02;for(const bridge of pairing.children)bridge.material.opacity=.82*strength;}
+function makeReleaseFactor(){
+  const group=new THREE.Group();
+  const body=orb(.42,0xe4b47b,1,24);body.scale.set(.78,1.35,.62);body.position.set(0,.42,0);setPick(body,releaseFactorDetail,6);group.add(body);
+  const arm=tube([[0,.44,0],[-.29,.13,.02],[-.31,-.35,.04],[-.12,-.74,.04]],.09,0xf0c996);setPick(arm,releaseFactorDetail,6);group.add(arm);
+  const tip=orb(.11,0xffdf9f,1,12);tip.position.set(-.12,-.74,.04);setPick(tip,releaseFactorDetail,7);group.add(tip);
+  const label=textSprite('RF','#433b2a','rgba(255,231,180,.92)',[.8,.45]);label.position.set(.08,1.27,.17);setPick(label,releaseFactorDetail,8);group.add(label);
+  group.traverse(object=>{if(object!==group)object.userData.highlightRoot=group;});group.visible=false;return group;
+}
 function chainPosition(j){return new THREE.Vector3(1.56-.04*j+.25*Math.sin(j*.48),1.72+.049*j,2.43+.2*Math.cos(j*.39));}
 function buildChain(){const points=[];for(let j=0;j<76;j++){const bead=orb(j===0?.135:.104,0xd2a676,1,12);setPick(bead,aminoDetail(sequence[j],j),8);bead.position.copy(chainPosition(j));bead.visible=false;chainGroup.add(bead);chainBeads.push(bead);points.push(bead.position);}const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(76*3),3));chainBond=new THREE.Line(geometry,new THREE.LineBasicMaterial({color:0xe8c99e,transparent:true,opacity:.9}));chainGroup.add(chainBond);}
 function makeFold(){
@@ -289,7 +315,7 @@ function makeFold(){
 }
 function makeModel(){modelGroup=new THREE.Group();scene.add(modelGroup);translationGroup=new THREE.Group();modelGroup.add(translationGroup);ribosomeGroup=new THREE.Group();translationGroup.add(ribosomeGroup);ribosomeGroup.add(organic(-1.8,-1.85,-.28,2.7,1.03,1.15,0x83a98d,.83),organic(1.42,-1.87,-.14,2.42,.97,1.06,0x86ad91,.78),organic(-1.48,.8,-.77,2.43,1.25,1.3,0x5e866e,.67),organic(1.22,1.0,-.64,2.69,1.45,1.5,0x638b70,.64),organic(.35,1.5,-1.26,2.38,.92,1.15,0x719b79,.6));ribosomeGroup.traverse(object=>{if(object!==ribosomeGroup)object.userData.highlightRoot=ribosomeGroup;});
   for(const [site,x] of Object.entries(siteX)){const siteGroup=new THREE.Group();translationGroup.add(siteGroup);const marker=textSprite(site,'#f8fff0','rgba(37,76,57,.94)',[.66,.53]);marker.position.set(x,-.26,2.85);setPick(marker,siteDetail(site),9);marker.userData.highlightRoot=siteGroup;siteGroup.add(marker);const halo=orb(.37,site==='A'?0xe6b880:0xb8ddad,.25,16);halo.position.set(x,-.2,1.45);setPick(halo,siteDetail(site),5);halo.userData.highlightRoot=siteGroup;siteGroup.add(halo);}
-  buildMovingRNA();trnaLayer=new THREE.Group();translationGroup.add(trnaLayer);chainGroup=new THREE.Group();modelGroup.add(chainGroup);buildChain();makeFold();
+  buildMovingRNA();trnaLayer=new THREE.Group();translationGroup.add(trnaLayer);releaseFactorGroup=makeReleaseFactor();translationGroup.add(releaseFactorGroup);chainGroup=new THREE.Group();modelGroup.add(chainGroup);buildChain();makeFold();
   fullRNA=new THREE.Group();modelGroup.add(fullRNA);const fullPoints=[];for(let i=0;i<codonText.length;i++){const x=-4.65+i/(codonText.length-1)*9.3,y=.32*Math.sin(i*.14)+.21*Math.cos(i*.075),z=1.55+.14*Math.sin(i*.095);fullPoints.push([x,y,z]);const bead=orb(.072,baseColors[codonText[i]],1,8);bead.position.set(x,y,z);setPick(bead,baseDetail(codonText[i],Math.floor(i/3),i%3),6);fullRNA.add(bead);}const fullBackbone=tube(fullPoints.filter((_,i)=>i%3===0),.055,0x345d50,1);setPick(fullBackbone,mrnaDetail,2);fullRNA.add(fullBackbone);
   particles=new THREE.Group();for(let i=0;i<66;i++){const phi=i*2.3999,r=3.5+(i%8)*.54,x=Math.cos(phi)*r,y=Math.sin(phi*.7)*3.7,z=-2-(i%6)*.45;const mote=orb(.025+(i%3)*.009,i%4===0?0xe5e8c1:0xd7e7d5,.23,6);mote.position.set(x,y,z);particles.add(mote);}scene.add(particles);
 }
@@ -351,18 +377,22 @@ function update3D(){if(!renderer)return;const p=state.progress;let index=Math.fl
   const translocation=THREE.MathUtils.smoothstep(f,.62,.96);
   movingRNA.position.x=index===0?5.25*(1-THREE.MathUtils.smoothstep(p,.1,.85)):(1-index)*codonSpacing-(index<76?codonSpacing*translocation:0);
   activeCodonHalo.position.x=index*codonSpacing;activeCodonHalo.material.color.setHex(index===76?0xf1a38b:0xf6ce90);if(hoverRoot===activeCodonHalo)activeCodonHalo.material.color.lerp(new THREE.Color(0xfff1b7),.2);activeCodonHalo.userData.detail=codonDetail(index);
-  if(index===0&&currentMeshes[0]){currentMeshes[0].position.set(0,-.38,2.38);currentMeshes[0].scale.setScalar(p<.22?.001:Math.min(1,Math.max(.05,(p-.2)*2)));}
-  if(index===76&&currentMeshes[0]){currentMeshes[0].position.set(0,-.38,2.38);currentMeshes[0].scale.setScalar(1-THREE.MathUtils.smoothstep(p,76.46,76.8));}
-  if(index>0&&index<76){const [prev,current,exiting]=currentMeshes;prev.position.set(siteX.P+(siteX.E-siteX.P)*translocation,-.38,2.38);current.position.set(4.8+(siteX.A-4.8)*THREE.MathUtils.smoothstep(f,.02,.26)+(siteX.P-siteX.A)*translocation,-.38,2.38);current.userData.cargo.visible=f<.48;prev.userData.cargo.visible=false;if(exiting){exiting.position.set(siteX.E-1.4*THREE.MathUtils.smoothstep(f,.2,.9),-.38,2.38);exiting.scale.setScalar(.76*(1-THREE.MathUtils.smoothstep(f,.35,.95)));}}
+  if(index===0&&currentMeshes[0]){const starter=currentMeshes[0];starter.position.set(0,-.38,2.38);starter.scale.setScalar(p<.22?.001:Math.min(1,Math.max(.05,(p-.2)*2)));setPairing(starter,THREE.MathUtils.smoothstep(p,.65,.88));}
+  if(index===76&&currentMeshes[0]){const holder=currentMeshes[0];holder.position.set(0,-.38,2.38);holder.scale.setScalar(1-THREE.MathUtils.smoothstep(p,76.46,76.8));setPairing(holder,1-THREE.MathUtils.smoothstep(p,76.46,76.72));}
+  if(index>0&&index<76){const [prev,current,exiting]=currentMeshes;prev.position.set(siteX.P+(siteX.E-siteX.P)*translocation,-.38,2.38);current.position.set(4.8+(siteX.A-4.8)*THREE.MathUtils.smoothstep(f,.02,.26)+(siteX.P-siteX.A)*translocation,-.38,2.38);current.userData.cargo.visible=f<.48;prev.userData.cargo.visible=false;setPairing(prev,1-THREE.MathUtils.smoothstep(f,.62,.94));setPairing(current,THREE.MathUtils.smoothstep(f,.25,.42));if(exiting){exiting.position.set(siteX.E-1.4*THREE.MathUtils.smoothstep(f,.2,.9),-.38,2.38);exiting.scale.setScalar(1-THREE.MathUtils.smoothstep(f,.05,.95));setPairing(exiting,0);}}
+  releaseFactorGroup.visible=p>=76.08&&p<76.8;
+  if(releaseFactorGroup.visible){const approach=THREE.MathUtils.smoothstep(p,76.08,76.36);releaseFactorGroup.position.set(4.8+(siteX.A-4.8)*approach,-.38,2.45);releaseFactorGroup.scale.setScalar(THREE.MathUtils.smoothstep(p,76.08,76.18)*(1-THREE.MathUtils.smoothstep(p,76.67,76.8)));}
   // Once the peptide bond forms, the chain rides the A-site tRNA into P.
   chainGroup.position.x=index>0&&index<76?codonSpacing*THREE.MathUtils.smoothstep(f,.44,.61)*(1-translocation):0;
-  let chainLength=p<.52?0:p<1?1:p<76?Math.min(76,Math.floor(p)+((phase>.49||state.reduceMotion)?1:0)):76;
-  if(chainLength!==lastChainLength||foldT>0){for(let j=0;j<76;j++){const bead=chainBeads[j];bead.visible=j<chainLength;const start=chainPosition(j),end=foldGroup.userData.ca[j];bead.position.copy(start).lerp(end,foldT);bead.material.opacity=1-foldT*.15;const attr=chainBond.geometry.attributes.position;attr.setXYZ(j,bead.position.x,bead.position.y,bead.position.z);}chainBond.geometry.setDrawRange(0,chainLength);chainBond.geometry.attributes.position.needsUpdate=true;lastChainLength=chainLength;}
+  let chainLength=p<.52?0:p<1?1:p<76?Math.min(76,Math.floor(p)+(phase>.49?1:0)):76;
+  if(chainLength!==lastChainLength||foldT>0){for(let j=0;j<76;j++){const bead=chainBeads[j];bead.visible=j<chainLength;bead.scale.setScalar(1);const start=chainPosition(j),end=foldGroup.userData.ca[j];bead.position.copy(start).lerp(end,foldT);bead.material.opacity=1-foldT*.15;const attr=chainBond.geometry.attributes.position;attr.setXYZ(j,bead.position.x,bead.position.y,bead.position.z);}chainBond.geometry.setDrawRange(0,chainLength);chainBond.geometry.attributes.position.needsUpdate=true;lastChainLength=chainLength;}
+  // Reveal each new residue along the peptide bond, then carry the chain from A to P.
+  if(index>0&&index<76&&chainLength>index){const tip=chainBeads[index],growth=THREE.MathUtils.smoothstep(f,.49,.61);tip.position.copy(chainPosition(index-1)).lerp(chainPosition(index),growth);tip.scale.setScalar(Math.max(.01,growth));chainBond.geometry.attributes.position.setXYZ(index,tip.position.x,tip.position.y,tip.position.z);chainBond.geometry.attributes.position.needsUpdate=true;}
   foldGroup.visible=foldT>.72;foldMaterials.forEach(mat=>mat.opacity=Math.max(0,(foldT-.72)/.28));chainGroup.visible=active&&foldT<.995;
   if(hoverPick&&(!isWorldVisible(hoverPick.object)||!isDetailPresent(hoverPick.item)))clearModelHighlight();
   controls.update();renderer.render(scene,camera);
 }
-function formatCaption(p){if(p<.14)return 'A complete mRNA message carries the instructions, read three bases at a time.';if(p<.65)return 'The 5′ end of the mRNA enters the ribosome and slides toward the P site.';if(p<1)return 'AUG reaches P. The initiator tRNA pairs with the start codon.';if(p<3){const phase=p%1;if(phase<.26)return '1 · A charged tRNA enters the A site beside the chain-carrying tRNA in P.';if(phase<.44)return '2 · Its anticodon pairs with the codon in the A site.';if(phase<.62)return '3 · A peptide bond extends the growing chain.';return '4 · tRNAs move A → P → E as mRNA slides exactly one codon.';}if(p<76)return 'The same A → P → E cycle repeats rapidly while mRNA moves through the ribosome.';if(p<76.44)return 'UAA reaches A. No tRNA pairs with this stop codon.';if(p<76.7)return 'The completed chain releases from the P-site tRNA.';if(p<77)return 'The free chain leaves the ribosome and approaches its measured fold.';return 'The finished protein is shown as a 1UBQ backbone ribbon; the folding path is illustrative.';}
+function formatCaption(p){if(p<.14)return 'A complete mRNA message carries the instructions, read three bases at a time.';if(p<.65)return 'The 5′ end of the mRNA enters the ribosome and slides toward the P site.';if(p<1)return 'AUG reaches P. The initiator tRNA pairs with the start codon.';if(p<3){const phase=p%1;if(phase<.26)return '1 · A charged tRNA enters the A site beside the chain-carrying tRNA in P.';if(phase<.44)return '2 · Its anticodon pairs with the codon in the A site.';if(phase<.62)return '3 · A peptide bond transfers the growing chain to the A-site amino acid.';return '4 · tRNAs move A → P → E as mRNA slides exactly one codon.';}if(p<76)return 'The same A → P → E cycle repeats rapidly while mRNA moves through the ribosome.';if(p<76.44)return 'UAA reaches A. A release factor enters instead of a tRNA.';if(p<76.7)return 'The release factor frees the completed chain from the P-site tRNA.';if(p<77)return 'The free chain leaves the ribosome and approaches its measured fold.';return 'The finished protein is shown as a 1UBQ backbone ribbon; the folding path is illustrative.';}
 function chainCount(p){return p<.52?0:p<1?1:p<76?Math.min(76,Math.floor(p)+(p%1>.49?1:0)):76;}
 function pausedAction(p){if(p<1)return 'mRNA entry and start recognition';if(p<76){const phase=p%1;return phase<.26?'tRNA entering A':phase<.44?'codon–anticodon pairing':phase<.62?'peptide bond forming':'A → P → E translocation';}return p<76.45?'stop codon in A':p<77?'chain release and folding':'folded protein';}
 function updatePauseReadout(){
@@ -370,7 +400,7 @@ function updatePauseReadout(){
   dom.pauseReadout.hidden=state.playing||p<.14;
   if(dom.pauseReadout.hidden)return;
   const index=Math.min(76,Math.floor(p)),stop=index===76;
-  const rows=[['mRNA codon',codons[index]],['tRNA anticodon',stop?'none':anticodon(codons[index])],['Amino acid',stop?'none added':AA[sequence[index]].name],['Action',pausedAction(p)],['Chain length',`${chainCount(p)} / 76`]];
+  const rows=[['mRNA codon',codons[index]],['tRNA anticodon',stop?'none':anticodon(codons[index])],['Amino acid',stop?'none added':AA[sequence[index]].name],...(stop?[['Stop reader','release factor']]:[]),['Action',pausedAction(p)],['Chain length',`${chainCount(p)} / 76`]];
   dom.pauseReadout.innerHTML=`<span class="pause-eyebrow">PAUSED FRAME · CODON ${index+1} / 77</span>${rows.map(([name,value])=>`<div><span>${name}</span><strong>${value}</strong></div>`).join('')}`;
 }
 function updateAvailableObjects(){
@@ -406,11 +436,11 @@ $('next').addEventListener('click',()=>{state.playing=false;syncPlay();const cur
 dom.timeline.addEventListener('input',()=>{state.playing=false;syncPlay();setProgress(secondsToProgress(Number(dom.timeline.value)));});
 dom.speed.addEventListener('change',()=>{state.speed=Number(dom.speed.value);});
 dom.unpin.addEventListener('click',()=>{state.pinned=null;refreshInspector();});
-$('object-select').addEventListener('change',event=>{const choice=event.target.value,index=Math.min(76,Math.floor(state.progress));const items={mrna:mrnaDetail,ribosome:ribosomeDetail,E:siteDetail('E'),P:siteDetail('P'),A:siteDetail('A'),trna:index===76?trnaDetail(75):trnaDetail(index),residue:index<76?aminoDetail(sequence[index],index):null,chain:chainDetail,protein:proteinDetail};if(visibleParts()[choice]&&items[choice])pin(items[choice]);event.target.value='';});
+$('object-select').addEventListener('change',event=>{const choice=event.target.value,index=Math.min(76,Math.floor(state.progress));const items={mrna:mrnaDetail,ribosome:ribosomeDetail,E:siteDetail('E'),P:siteDetail('P'),A:siteDetail('A'),trna:index===76?trnaDetail(75):trnaDetail(index),releaseFactor:releaseFactorDetail,residue:index<76?aminoDetail(sequence[index],index):null,chain:chainDetail,protein:proteinDetail};if(visibleParts()[choice]&&items[choice])pin(items[choice]);event.target.value='';});
 document.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;if(e.code==='Space'&&document.activeElement===document.body){e.preventDefault();dom.play.click();}if(e.code==='ArrowRight'&&document.activeElement===document.body)$('next').click();if(e.code==='ArrowLeft'&&document.activeElement===document.body)$('previous').click();});
 matchMedia('(prefers-reduced-motion: reduce)').addEventListener?.('change',e=>{state.reduceMotion=e.matches;});
 init3D();updateUI();update3D();syncPlay();
 let lastTime=performance.now();function frame(now){const dt=Math.min(.09,(now-lastTime)/1000);lastTime=now;if(state.playing){state.playheadSeconds=Math.min(totalSeconds,state.playheadSeconds+dt*state.speed);state.progress=secondsToProgress(state.playheadSeconds);if(state.progress>=77){state.progress=77;state.playing=false;syncPlay();}updateUI();}if(particles&&!state.reduceMotion){particles.rotation.z+=dt*.006;}update3D();if(lastScenePointer&&now-lastHoverSample>80)onPointerMove(lastScenePointer);if(aminoPreview){aminoPreview.controls.update();aminoPreview.renderer.render(aminoPreview.scene,aminoPreview.camera);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
 
 // A small public hook supports deterministic browser checks without exposing app internals.
-window.translationLesson={sequence,codons,aminoAcids:AA,structureId:structure.pdb,setProgress,getProgress:()=>state.progress,getPlayheadSeconds:()=>state.playheadSeconds,getRNAOffset:()=>movingRNA?.position.x,getHover:()=>hoverPick?.item.id||null,getHighlightState:()=>({item:hoverPick?.item.id||null,parts:hoverBackups.length}),getAvailableParts:()=>visibleParts(),secondsToProgress,progressToSeconds,playbackSegments};
+window.translationLesson={sequence,codons,aminoAcids:AA,structureId:structure.pdb,setProgress,getProgress:()=>state.progress,getPlayheadSeconds:()=>state.playheadSeconds,getRNAOffset:()=>movingRNA?.position.x,getHover:()=>hoverPick?.item.id||null,getHighlightState:()=>({item:hoverPick?.item.id||null,parts:hoverBackups.length}),getAvailableParts:()=>visibleParts(),getTRNAState:()=>({cached:trnaCache.size,active:currentMeshes.map(group=>({index:group.userData.index,x:group.position.x,scale:group.scale.x,pairing:group.userData.pairing.visible,cargo:group.userData.cargo.visible}))}),secondsToProgress,progressToSeconds,playbackSegments};
