@@ -13,4 +13,4 @@ npm ci
 npm run build
 ```
 
-The example mRNA encodes the 76-residue ubiquitin monomer followed by UAA. The fold transition is illustrative; the final ribbon follows the measured 1UBQ backbone. The 20-amino-acid reference uses representative codon and tRNA pairings. The bundled Three.js library is distributed under the license in [`THREE-LICENSE.txt`](THREE-LICENSE.txt).
+The example mRNA encodes the 76-residue ubiquitin monomer followed by UAA. The fold transition is illustrative; the default final Cα backbone follows measured 1UBQ coordinates. Switch the finished structure to ribbon, heavy-atom ball-and-stick, or space-filling view. The 20-amino-acid reference gives representative DNA coding-strand, mRNA, and tRNA triplets alongside approximate free-amino-acid pKa and pI values. The bundled Three.js library is distributed under the license in [`THREE-LICENSE.txt`](THREE-LICENSE.txt).

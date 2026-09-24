@@ -41,6 +41,13 @@
               <div class="scene-left-tag"><span class="micro-label">CURRENT FOCUS</span><strong id="scene-codon">AUG</strong><span id="scene-amino">Methionine · Met</span></div>
               <div class="scene-right-tag" id="scene-right-tag"><span class="micro-label">POLYPEPTIDE</span><strong id="scene-chain-count">0 <small>/ 76 residues</small></strong></div>
               <div class="scene-caption" id="scene-caption" aria-live="polite">A messenger RNA strand carries instructions in groups of three bases, called codons.</div>
+              <div class="structure-modes" id="structure-modes" role="group" aria-label="Finished protein view" hidden>
+                <span>1UBQ STRUCTURE</span>
+                <button type="button" data-mode="backbone" aria-pressed="true">Cα backbone</button>
+                <button type="button" data-mode="ribbon" aria-pressed="false">Ribbon</button>
+                <button type="button" data-mode="ballStick" aria-pressed="false">Ball &amp; stick</button>
+                <button type="button" data-mode="spaceFill" aria-pressed="false">Space filling</button>
+              </div>
               <div class="hover-label" id="hover-label" hidden></div>
               <div class="scene-corner tl"></div><div class="scene-corner tr"></div><div class="scene-corner bl"></div><div class="scene-corner br"></div>
             </div>
@@ -79,12 +86,33 @@
           <div class="sequence-shell"><div class="sequence-axis"><span>5′ START</span><span>3′ END</span></div><div class="sequence-track" id="sequence-track" role="group" aria-label="Complete mRNA sequence, codon by codon"></div><div class="sequence-legend"><span><i class="base-a"></i>Adenine · A</span><span><i class="base-u"></i>Uracil · U</span><span><i class="base-g"></i>Guanine · G</span><span><i class="base-c"></i>Cytosine · C</span><span class="legend-note">RNA uses U, not T</span></div></div>
         </section>
 
-        <section class="catalog-section" aria-labelledby="catalog-title"><div class="section-heading catalog-heading"><div><p class="eyebrow">OPTIONAL MOLECULAR REFERENCE</p><h2 id="catalog-title">Explore the carriers.</h2></div><p>Open this reference to inspect one representative tRNA pairing for each amino acid. More than one codon or tRNA can correspond to an amino acid.</p></div>
-          <div class="catalog-layout"><div class="catalog-grid" id="catalog-grid" role="group" aria-label="Twenty amino acid representatives"></div><div class="catalog-detail"><div class="catalog-detail-head"><span class="section-label">tRNA DETAIL</span><button id="catalog-replay" type="button" aria-label="Replay selected tRNA through A, P, and E sites">↺ Replay path</button></div><div class="catalog-title-line"><span id="catalog-letter">M</span><div><span class="small-overline" id="catalog-abr">MET · M</span><h3 id="catalog-name">Methionine</h3></div></div><p id="catalog-description">The initiating amino acid. Its tRNA starts directly in the P site at the AUG start codon.</p><div class="pairing"><div><span>mRNA CODON</span><strong id="catalog-codon">AUG</strong></div><span class="pairing-lines" aria-hidden="true">│││</span><div><span>tRNA ANTICODON</span><strong id="catalog-anticodon">UAC</strong></div></div><div class="mini-animation"><div class="mini-stage-labels"><span>E <small>EXIT</small></span><span>P <small>PEPTIDE</small></span><span>A <small>ARRIVAL</small></span></div><svg id="mini-stage" viewBox="0 0 420 138" role="img" aria-label="Selected tRNA moving through ribosome A, P and E sites"><path class="mini-ribosome" d="M24 69 C38 27, 94 28, 136 43 C184 11, 239 22, 270 39 C330 17, 385 36, 397 75 C382 112, 307 120, 274 101 C223 125, 174 115, 138 102 C82 120, 33 108, 24 69 Z"/><path class="mini-rna" d="M2 107 H418"/><g id="mini-trna"><path d="M0 0 V-33 L-17 -53 M0 -33 L18 -53 M0 -5 L-11 7 M0 -5 L11 7" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cy="-57" r="10" fill="currentColor"/><circle cy="9" r="3" fill="#f5f1df"/></g><text id="mini-site-text" x="210" y="132">A → P → E</text></svg></div><div class="catalog-note" id="catalog-note">For initiation, this carrier is placed in the P site first. Later tRNAs enter at A, shift to P, then leave through E.</div></div></div>
+        <section class="catalog-section" aria-labelledby="catalog-title">
+          <div class="section-heading catalog-heading"><div><p class="eyebrow">OPTIONAL MOLECULAR REFERENCE</p><h2 id="catalog-title">Explore the amino acids.</h2></div><p>Inspect one representative DNA, mRNA, and tRNA triplet for each amino acid. Multiple codons and tRNAs may encode the same amino acid.</p></div>
+          <div class="catalog-layout">
+            <div class="catalog-grid" id="catalog-grid" role="group" aria-label="Twenty amino acids"></div>
+            <div class="catalog-detail">
+              <div class="catalog-detail-head"><span class="section-label">AMINO ACID DETAIL</span></div>
+              <div class="catalog-title-line"><span id="catalog-letter">M</span><div><span class="small-overline" id="catalog-abr">MET · M</span><h3 id="catalog-name">Methionine</h3></div></div>
+              <p id="catalog-description"></p>
+              <div class="pairing">
+                <div><span>DNA CODING STRAND · 5′→3′</span><strong id="catalog-dna">ATG</strong></div>
+                <div><span>mRNA CODON · 5′→3′</span><strong id="catalog-codon">AUG</strong></div>
+                <div><span>tRNA ANTICODON · 3′→5′</span><strong id="catalog-anticodon">UAC</strong></div>
+              </div>
+              <div class="chemistry-grid" aria-label="Free amino acid acidity values">
+                <div><span>SIDE-CHAIN CLASS</span><strong id="catalog-class">Nonpolar</strong></div>
+                <div><span>ISOELECTRIC pH · pI</span><strong id="catalog-pi">5.71</strong></div>
+                <div><span>α-CARBOXYL pK<sub>a</sub></span><strong id="catalog-pka-carboxyl">2.13</strong></div>
+                <div><span>α-AMINO pK<sub>a</sub></span><strong id="catalog-pka-amino">9.28</strong></div>
+                <div><span>SIDE-CHAIN pK<sub>a</sub></span><strong id="catalog-pka-side">No listed value</strong></div>
+              </div>
+              <p class="catalog-note" id="catalog-note"></p>
+            </div>
+          </div>
         </section>
       </main>
 
-      <footer class="site-footer"><span>MOLECULAR ATLAS / MBIO 240</span><span>Protein: <a href="https://www.rcsb.org/structure/1UBQ" target="_blank" rel="noreferrer">PDB 1UBQ</a> · Amino acids: <a href="https://pubchem.ncbi.nlm.nih.gov/" target="_blank" rel="noreferrer">PubChem</a> · Mechanism: <a href="https://www.ncbi.nlm.nih.gov/books/NBK9849/" target="_blank" rel="noreferrer">NCBI Bookshelf</a></span><span>The folding motion is illustrative; the final coordinates are measured.</span></footer>
+      <footer class="site-footer"><span>MOLECULAR ATLAS / MBIO 240</span><span>Protein: <a href="https://www.rcsb.org/structure/1UBQ" target="_blank" rel="noreferrer">PDB 1UBQ</a> · Amino acids: <a href="https://pubchem.ncbi.nlm.nih.gov/" target="_blank" rel="noreferrer">PubChem</a> · pK<sub>a</sub> / pI: <a href="https://www.vanderbilt.edu/AnS/Chemistry/Rizzo/stuff/AA/AminoAcids.html" target="_blank" rel="noreferrer">Vanderbilt Chemistry</a> · Mechanism: <a href="https://www.ncbi.nlm.nih.gov/books/NBK9849/" target="_blank" rel="noreferrer">NCBI Bookshelf</a></span><span>The folding motion is illustrative; the final coordinates are measured.</span></footer>
     </div>
   </body>
 </html>
