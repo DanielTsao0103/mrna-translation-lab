@@ -40,4 +40,6 @@
 @media(max-width:1250px){.workbench{height:calc(clamp(490px,43vw,610px) + 185px)}}
 @media(max-width:900px){.workbench{height:auto}.scene-wrap{height:540px;min-height:540px;flex:none}.inspector{height:480px}}
 @media(max-width:650px){.scene-wrap{height:460px;min-height:460px}.inspector{height:490px}}
+.speed-control .speed-note{font-size:8px;letter-spacing:.08em;color:#5e846a;white-space:nowrap}
+.speed-control .speed-note[hidden]{display:none}
 .codon:hover,.codon:focus-visible{transform:none}

@@ -57,7 +57,7 @@
               <button class="play-button" id="play" type="button" aria-label="Play animation"><span id="play-icon">▶</span><span id="play-text">Play sequence</span></button>
               <button class="icon-button" id="next" type="button" aria-label="Next codon" title="Next codon">→</button>
               <div class="progress-block"><div class="progress-meta"><span id="progress-phase">THE MESSAGE</span><span id="progress-count">00 / 77 CODONS</span></div><input id="timeline" type="range" min="0" max="77" value="0" step="0.01" aria-label="Scrub through translation timeline"><div class="timeline-marks"><span>mRNA</span><span>initiation</span><span>elongation</span><span>stop</span><span>fold</span></div></div>
-              <label class="speed-control">SPEED <select id="speed" aria-label="Animation speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+              <label class="speed-control">SPEED <select id="speed" aria-label="Animation speed" title="The 9 aa/s option applies to elongation. Start and stop timing remain illustrative."><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="cell">Cell pace · 9 aa/s</option></select><span class="speed-note" id="speed-note" hidden>ELONGATION ONLY</span></label>
             </div>
           </div>
 

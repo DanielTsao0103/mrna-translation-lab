@@ -48,10 +48,17 @@ const playbackSegments = [
   {start:3,end:76,seconds:73*.3,label:'rapid repetition'},
   {start:76,end:77,seconds:9,label:'stop and release'}
 ];
-let totalSeconds=0;
-for(const segment of playbackSegments){segment.at=totalSeconds;totalSeconds+=segment.seconds;}
-function secondsToProgress(seconds){for(const part of playbackSegments){if(seconds<=part.at+part.seconds)return part.start+(seconds-part.at)/part.seconds*(part.end-part.start);}return 77;}
-function progressToSeconds(progress){for(const part of playbackSegments){if(progress<=part.end)return part.at+(progress-part.start)/(part.end-part.start)*part.seconds;}return totalSeconds;}
+// The cell-pace option changes the timeline itself, so each elongation codon takes 1/9 second.
+const cellSegments = [
+  {start:0,end:1,seconds:1.5,label:'illustrative initiation'},
+  {start:1,end:76,seconds:75/9,label:'9 amino acids per second'},
+  {start:76,end:77,seconds:1.5,label:'illustrative termination'}
+];
+function stampSegments(segments){let seconds=0;for(const segment of segments){segment.at=seconds;seconds+=segment.seconds;}return seconds;}
+const standardSeconds=stampSegments(playbackSegments),cellSeconds=stampSegments(cellSegments);
+let activeSegments=playbackSegments,totalSeconds=standardSeconds;
+function secondsToProgress(seconds){for(const part of activeSegments){if(seconds<=part.at+part.seconds)return part.start+(seconds-part.at)/part.seconds*(part.end-part.start);}return 77;}
+function progressToSeconds(progress){for(const part of activeSegments){if(progress<=part.end)return part.at+(progress-part.start)/(part.end-part.start)*part.seconds;}return totalSeconds;}
 if (sequence.length !== 76 || codons.length !== 77 || !sequence.startsWith('M') || ![...sequence].every(letter => AA[letter])) throw new Error('Invalid lesson sequence');
 if ([...sequence].some((letter,index) => AA[letter].codon.length !== 3 || (index === 0 && AA[letter].codon !== 'AUG'))) throw new Error('Invalid codon mapping');
 
@@ -59,7 +66,7 @@ const $ = id => document.getElementById(id);
 const dom = {
   scene:$('scene'),sceneWrap:$('scene-wrap'),fallback:$('scene-fallback'),hover:$('hover-label'),structureModes:$('structure-modes'),
   phase:$('stage-phase'),codon:$('scene-codon'),amino:$('scene-amino'),chain:$('scene-chain-count'),caption:$('scene-caption'),
-  play:$('play'),playIcon:$('play-icon'),playText:$('play-text'),timeline:$('timeline'),speed:$('speed'),
+  play:$('play'),playIcon:$('play-icon'),playText:$('play-text'),timeline:$('timeline'),speed:$('speed'),speedNote:$('speed-note'),
   count:$('progress-count'),progressPhase:$('progress-phase'),track:$('sequence-track'),
   inspectorKicker:$('inspector-kicker'),inspectorTitle:$('inspector-title'),inspectorDescription:$('inspector-description'),
   inspectorFact:$('inspector-fact'),inspectorData:$('inspector-data'),pauseReadout:$('pause-readout'),pinState:$('pin-state'),unpin:$('unpin'),
@@ -67,7 +74,7 @@ const dom = {
   catalogDescription:$('catalog-description'),catalogDNA:$('catalog-dna'),catalogCodon:$('catalog-codon'),catalogAnticodon:$('catalog-anticodon'),
   catalogClass:$('catalog-class'),catalogPI:$('catalog-pi'),catalogPKACarboxyl:$('catalog-pka-carboxyl'),catalogPKAAmino:$('catalog-pka-amino'),catalogPKASide:$('catalog-pka-side'),catalogNote:$('catalog-note')
 };
-const state = {progress:0,playheadSeconds:0,playing:false,speed:1,pinned:null,hovered:null,selectedAA:'M',structureMode:'backbone',reduceMotion:matchMedia('(prefers-reduced-motion: reduce)').matches};
+const state = {progress:0,playheadSeconds:0,playing:false,speed:1,cellPace:false,pinned:null,hovered:null,selectedAA:'M',structureMode:'backbone',reduceMotion:matchMedia('(prefers-reduced-motion: reduce)').matches};
 dom.timeline.max=String(totalSeconds);
 const objectOptions=[...$('object-select').options].map(option=>option.cloneNode(true));
 const sourceLine = 'Example RNA · 5′→3′';
@@ -104,7 +111,7 @@ function currentDetail(){
   const p=state.progress;
   if(p<.14)return detail('intro','THE MESSAGE','One message, read in threes.','The full mRNA contains 231 RNA bases. The ribosome will read them as 77 three-base codons.','The animation follows the process; pause anywhere to inspect the exact codon and carrier.');
   if(p<1)return detail('initiation','INITIATION','The message enters.','The mRNA threads through the ribosome until AUG sits in the P site. The initiator tRNA pairs with it.','AUG establishes the reading frame for every codon that follows.',[['Start codon','AUG'],['Initiator site','P']]);
-  if(state.playing&&p>=3&&p<76)return detail('rapid-repeat','ELONGATION · RAPID REPEAT','The cycle repeats.','An incoming tRNA pairs at A. A peptide bond lengthens the chain. The mRNA and tRNAs move together by one codon, and an empty tRNA leaves at E.','Pause to reveal the exact codon, anticodon, residue, and action at any frame.',[['Incoming','A site'],['Growing chain','P site'],['Departure','E site']]);
+  if(state.playing&&p>= (state.cellPace?1:3)&&p<76)return detail(state.cellPace?'cell-repeat':'rapid-repeat',state.cellPace?'ELONGATION · 9 AA/S':'ELONGATION · RAPID REPEAT',state.cellPace?'The cycle runs at 9 aa/s.':'The cycle repeats.','An incoming tRNA pairs at A. A peptide bond lengthens the chain. The mRNA and tRNAs move together by one codon, and an empty tRNA leaves at E.',state.cellPace?'This is a representative elongation rate; real rates vary by cell and condition. Pause to inspect any codon.':'Pause to reveal the exact codon, anticodon, residue, and action at any frame.',[['Incoming','A site'],['Growing chain','P site'],['Departure','E site']]);
   if(state.playing&&p<3){const step=p%1,cycle=Math.floor(p),stage=step<.26?0:step<.44?1:step<.62?2:3;const titles=['A new tRNA arrives.','The anticodon pairs.','A peptide bond forms.','The message advances.'];const descriptions=['A charged tRNA moves into the A site beside the tRNA already in P.','Three anticodon bases on the incoming tRNA align with the mRNA codon.','The growing chain is transferred to the amino acid held at A.','The tRNAs shift toward P and E while the mRNA slides one codon through the ribosome.'];return detail(`slow-${cycle}-${stage}`,'ELONGATION · SLOW MOTION',titles[stage],descriptions[stage],`Cycle ${cycle} of 2 is shown slowly so you can follow all three ribosome sites.`,[['Path','A → P → E'],['mRNA step','Three bases']]);}
   if(p<76){const i=Math.floor(p),aa=AA[sequence[i]];return detail(`current-${i}`,'PAUSED ELONGATION',`Codon ${i+1}: ${codons[i]}.`,`A matching tRNA brings ${aa.name} to the A site. A peptide bond adds it to the chain, then the tRNAs and mRNA move together.`,`This frame is paused so you can inspect the exact molecular details.`,[['Anticodon',anticodon(codons[i])],['Amino acid',aa.name],['Path','A → P → E']]);}
   if(p<76.45)return detail('stop','TERMINATION','A stop signal arrives.','UAA is a stop codon. It does not recruit a tRNA or add an amino acid.','A release factor recognizes the stop signal and frees the completed chain.',[['Codon','UAA'],['Chain','76 amino acids']]);
@@ -448,7 +455,7 @@ function update3D(){if(!renderer)return;const p=state.progress;let index=Math.fl
   if(hoverPick&&(!isWorldVisible(hoverPick.object)||!isDetailPresent(hoverPick.item)))clearModelHighlight();
   controls.update();renderer.render(scene,camera);
 }
-function formatCaption(p){if(p<.14)return 'A complete mRNA message carries the instructions, read three bases at a time.';if(p<.65)return 'The 5′ end of the mRNA enters the ribosome and slides toward the P site.';if(p<1)return 'AUG reaches P. The initiator tRNA pairs with the start codon.';if(p<3){const phase=p%1;if(phase<.26)return '1 · A charged tRNA enters the A site beside the chain-carrying tRNA in P.';if(phase<.44)return '2 · Its anticodon pairs with the codon in the A site.';if(phase<.62)return '3 · The chain transfers from the P-site tRNA to the A-site amino acid.';return '4 · The emptied tRNA moves toward E as the chain-bearing tRNA shifts A → P.';}if(p<76)return 'The same A → P → E cycle repeats rapidly while mRNA moves through the ribosome.';if(p<76.44)return 'UAA reaches A. A release factor enters instead of a tRNA.';if(p<76.7)return 'The release factor frees the completed chain from the P-site tRNA.';if(p<77)return 'The free chain leaves the ribosome and bends into its measured backbone shape.';return {backbone:'Cα backbone · 76 measured positions linked into one trace. The folding path is illustrative.',ribbon:'Ribbon · helices, sheets, and loops follow the measured 1UBQ backbone.',ballStick:'Ball & stick · 602 measured heavy atoms with inferred bonds; hydrogens are omitted.',spaceFill:'Space filling · heavy atoms are shown at approximate van der Waals radii.'}[state.structureMode];}
+function formatCaption(p){if(p<.14)return 'A complete mRNA message carries the instructions, read three bases at a time.';if(p<.65)return 'The 5′ end of the mRNA enters the ribosome and slides toward the P site.';if(p<1)return 'AUG reaches P. The initiator tRNA pairs with the start codon.';if(state.cellPace&&p<76)return 'Cell pace · 9 amino acids per second during elongation. Pause to inspect each codon; real rates vary.';if(p<3){const phase=p%1;if(phase<.26)return '1 · A charged tRNA enters the A site beside the chain-carrying tRNA in P.';if(phase<.44)return '2 · Its anticodon pairs with the codon in the A site.';if(phase<.62)return '3 · The chain transfers from the P-site tRNA to the A-site amino acid.';return '4 · The emptied tRNA moves toward E as the chain-bearing tRNA shifts A → P.';}if(p<76)return 'The same A → P → E cycle repeats rapidly while mRNA moves through the ribosome.';if(p<76.44)return 'UAA reaches A. A release factor enters instead of a tRNA.';if(p<76.7)return 'The release factor frees the completed chain from the P-site tRNA.';if(p<77)return 'The free chain leaves the ribosome and bends into its measured backbone shape.';return {backbone:'Cα backbone · 76 measured positions linked into one trace. The folding path is illustrative.',ribbon:'Ribbon · helices, sheets, and loops follow the measured 1UBQ backbone.',ballStick:'Ball & stick · 602 measured heavy atoms with inferred bonds; hydrogens are omitted.',spaceFill:'Space filling · heavy atoms are shown at approximate van der Waals radii.'}[state.structureMode];}
 function chainCount(p){return p<.52?0:p<1?1:p<76?Math.min(76,Math.floor(p)+(p%1>=.62?1:0)):76;}
 function pausedAction(p){if(p<1)return 'mRNA entry and start recognition';if(p<76){const phase=p%1;return phase<.26?'tRNA entering A':phase<.44?'codon–anticodon pairing':phase<.62?'peptide bond forming':'A → P → E translocation';}return p<76.45?'stop codon in A':p<77?'chain release and folding':'folded protein';}
 function updatePauseReadout(){
@@ -471,9 +478,9 @@ function updateAvailableObjects(){
 }
 function updateUI(){
   const p=state.progress,index=Math.min(76,Math.floor(p));
-  const phase=p<.14?'THE MESSAGE':p<1?'INITIATION · mRNA ENTRY':p<2?'ELONGATION · CYCLE 1 SLOW':p<3?'ELONGATION · CYCLE 2 SLOW':p<76?'ELONGATION · RAPID REPEAT':p<76.44?'STOP CODON':p<77?'RELEASE AND FOLD':'FOLDED PROTEIN';
+  const phase=p<.14?'THE MESSAGE':p<1?'INITIATION · mRNA ENTRY':state.cellPace&&p<76?'ELONGATION · 9 AA/S':p<2?'ELONGATION · CYCLE 1 SLOW':p<3?'ELONGATION · CYCLE 2 SLOW':p<76?'ELONGATION · RAPID REPEAT':p<76.44?'STOP CODON':p<77?'RELEASE AND FOLD':'FOLDED PROTEIN';
   dom.phase.textContent=phase;dom.progressPhase.textContent=phase;
-  const rapid=state.playing&&p>=3&&p<76;
+  const rapid=state.playing&&p>=(state.cellPace?1:3)&&p<76;
   dom.codon.textContent=p>=77?'1UBQ':p<.14?'5′→3′':rapid?'A→P→E':codons[index];
   const viewLabels={backbone:'Cα backbone',ribbon:'ribbon',ballStick:'ball & stick',spaceFill:'space filling'};
   dom.amino.textContent=p>=77?`Folded ubiquitin · ${viewLabels[state.structureMode]}`:p<.14?'A · U · G · C · 231 bases':rapid?'REPEATING CYCLE':index===76?'Stop signal':`${AA[sequence[index]].name} · ${AA[sequence[index]].abbr}`;
@@ -482,6 +489,7 @@ function updateUI(){
   dom.timeline.value=String(state.playheadSeconds);dom.timeline.style.setProperty('--progress',`${state.playheadSeconds/totalSeconds*100}%`);
   dom.count.textContent=`${String(Math.min(77,Math.max(0,Math.ceil(p)))).padStart(2,'0')} / 77 CODONS`;
   dom.structureModes.hidden=p<77;
+  dom.speedNote.hidden=!state.cellPace;
   if(index!==lastSelection){codonButtons.forEach((button,i)=>{button.classList.toggle('active',i===index);button.classList.toggle('played',i<index);button.setAttribute('aria-current',i===index?'step':'false');});const target=codonButtons[index];if(target){const trackBox=dom.track.getBoundingClientRect(),targetBox=target.getBoundingClientRect();const left=targetBox.left-trackBox.left+dom.track.scrollLeft-dom.track.clientWidth/2+targetBox.width/2;dom.track.scrollLeft=left;}lastSelection=index;}
   updateAvailableObjects();refreshInspector();updatePauseReadout();
 }
@@ -492,7 +500,11 @@ $('restart').addEventListener('click',()=>{state.playing=false;syncPlay();setPro
 $('previous').addEventListener('click',()=>{state.playing=false;syncPlay();const current=Math.floor(state.progress);setProgress(current<=1?.5:current-1+.42);});
 $('next').addEventListener('click',()=>{state.playing=false;syncPlay();const current=Math.floor(state.progress);setProgress(current>=76?77:current+1+.42);});
 dom.timeline.addEventListener('input',()=>{state.playing=false;syncPlay();setProgress(secondsToProgress(Number(dom.timeline.value)));});
-dom.speed.addEventListener('change',()=>{state.speed=Number(dom.speed.value);});
+dom.speed.addEventListener('change',()=>{
+  state.cellPace=dom.speed.value==='cell';state.speed=state.cellPace?1:Number(dom.speed.value);
+  activeSegments=state.cellPace?cellSegments:playbackSegments;totalSeconds=state.cellPace?cellSeconds:standardSeconds;
+  dom.timeline.max=String(totalSeconds);state.playheadSeconds=progressToSeconds(state.progress);updateUI();
+});
 dom.unpin.addEventListener('click',()=>{state.pinned=null;refreshInspector();});
 dom.structureModes.querySelectorAll('button[data-mode]').forEach(button=>button.addEventListener('click',()=>{
   state.structureMode=button.dataset.mode;
@@ -506,4 +518,4 @@ init3D();updateUI();update3D();syncPlay();
 let lastTime=performance.now();function frame(now){const dt=Math.min(.09,(now-lastTime)/1000);lastTime=now;if(state.playing){state.playheadSeconds=Math.min(totalSeconds,state.playheadSeconds+dt*state.speed);state.progress=secondsToProgress(state.playheadSeconds);if(state.progress>=77){state.progress=77;state.playing=false;syncPlay();}updateUI();}if(particles&&!state.reduceMotion){particles.rotation.z+=dt*.006;}update3D();if(lastScenePointer&&now-lastHoverSample>80)onPointerMove(lastScenePointer);if(aminoPreview){aminoPreview.controls.update();aminoPreview.renderer.render(aminoPreview.scene,aminoPreview.camera);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
 
 // A small public hook supports deterministic browser checks without exposing app internals.
-window.translationLesson={sequence,codons,aminoAcids:AA,structureId:structure.pdb,setProgress,getProgress:()=>state.progress,getPlayheadSeconds:()=>state.playheadSeconds,getPinned:()=>state.pinned?.id||null,getRNAOffset:()=>movingRNA?.position.x,getHover:()=>hoverPick?.item.id||null,getHighlightState:()=>({item:hoverPick?.item.id||null,parts:hoverBackups.length}),getAvailableParts:()=>visibleParts(),getTRNAState:()=>({cached:trnaCache.size,active:currentMeshes.map(group=>({index:group.userData.index,x:group.position.x,scale:group.scale.x,pairing:group.userData.pairing.visible,cargo:group.userData.cargo.visible}))}),getStructureState:()=>({mode:state.structureMode,chainVisible:chainGroup?.visible,ribbonVisible:foldGroup?.visible,ballStickVisible:ballStickGroup?.visible,spaceFillVisible:spaceFillGroup?.visible,atomCount:ballStickGroup?.userData.atomCount,bondCount:ballStickGroup?.userData.bondCount}),getChainTip:()=>{const n=chainCount(state.progress);if(!n)return null;const bead=chainBeads[n-1];return {residue:n-1,x:bead.position.x+chainGroup.position.x,y:bead.position.y,z:bead.position.z,scale:bead.scale.x};},secondsToProgress,progressToSeconds,playbackSegments};
+window.translationLesson={sequence,codons,aminoAcids:AA,structureId:structure.pdb,setProgress,getProgress:()=>state.progress,getPlayheadSeconds:()=>state.playheadSeconds,getPinned:()=>state.pinned?.id||null,getRNAOffset:()=>movingRNA?.position.x,getHover:()=>hoverPick?.item.id||null,getHighlightState:()=>({item:hoverPick?.item.id||null,parts:hoverBackups.length}),getAvailableParts:()=>visibleParts(),getTRNAState:()=>({cached:trnaCache.size,active:currentMeshes.map(group=>({index:group.userData.index,x:group.position.x,scale:group.scale.x,pairing:group.userData.pairing.visible,cargo:group.userData.cargo.visible}))}),getStructureState:()=>({mode:state.structureMode,chainVisible:chainGroup?.visible,ribbonVisible:foldGroup?.visible,ballStickVisible:ballStickGroup?.visible,spaceFillVisible:spaceFillGroup?.visible,atomCount:ballStickGroup?.userData.atomCount,bondCount:ballStickGroup?.userData.bondCount}),getChainTip:()=>{const n=chainCount(state.progress);if(!n)return null;const bead=chainBeads[n-1];return {residue:n-1,x:bead.position.x+chainGroup.position.x,y:bead.position.y,z:bead.position.z,scale:bead.scale.x};},secondsToProgress,progressToSeconds,playbackSegments,getTiming:()=>({mode:state.cellPace?'cell':'lesson',totalSeconds,elongationSeconds:progressToSeconds(76)-progressToSeconds(1)})};
